@@ -1,0 +1,60 @@
+services:
+  mapproxy:
+    # The "-nginx" tag is the only upstream variant that has uwsgi installed
+    # (see mapproxy's Dockerfile: `pip install uwsgi` only happens in that
+    # build stage). We don't use its bundled nginx/run-nginx.sh -- we run
+    # uwsgi directly instead of the image's default CMD, fronted by our own
+    # optional nginx service (see docker-compose.override.yaml) and/or
+    # published directly below for an external proxy (e.g. AWS ALB) to use.
+    image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
+    container_name: mapproxy
+    command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
+    environment:
+      - UWSGI_PROCESSES=${UWSGI_PROCESSES:-8}
+      - UWSGI_THREADS=${UWSGI_THREADS:-4}
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${MAPPROXY_PORT:-8081}:5000"
+    volumes:
+      - ./mapproxy/config:/mapproxy/config:ro
+      - ./mapproxy/data:/data
+      - ./mapproxy/locks:/locks
+      - ./mapproxy/tile_locks:/tile_locks
+    depends_on:
+      tileservergl:
+        condition: service_healthy
+    shm_size: ${MAPPROXY_SHM_SIZE:-2gb}
+    restart: unless-stopped
+    networks:
+      - rbt-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  tileservergl:
+    image: maptiler/tileserver-gl:v5.7.0-pre.0
+    container_name: tileservergl
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_PORT:-8080}:8080"
+    volumes:
+      - ./tileserver/data:/data
+      - ./tileserver/fonts:/fonts
+      - ./tileserver/styles:/styles
+      - ./tileserver/config:/config:ro
+    command: ["-c", "/config/config.json"]
+    restart: unless-stopped
+    shm_size: ${TILESERVER_SHM_SIZE:-2gb}
+    networks:
+      - rbt-network
+    healthcheck:
+      test: ["CMD", "node", "/usr/src/app/src/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+networks:
+  rbt-network:
+    driver: bridge

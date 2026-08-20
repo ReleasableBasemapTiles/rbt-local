@@ -1,0 +1,52 @@
+{
+    "options": {
+      "paths": {
+        "root": "",
+        "fonts": "../fonts",
+        "mbtiles": "../data",
+        "styles": "../styles"
+      }
+    },
+    "data": {
+      "TERRAIN": {
+        "mbtiles": "TERRAIN.mbtiles",
+        "encoding": "mapbox",
+        "tileSize": 256
+      },
+      "RBT": {
+        "mbtiles": "RBT.mbtiles"
+      }
+    },
+    "styles": {
+      "RBT-TOPO": {
+        "style": "RBT-TOPO/style.json",
+        "serve_data": true,
+        "serve_rendered": true
+      },
+      "RBT-LIGHT": {
+        "style": "RBT-LIGHT/style.json",
+        "serve_data": true,
+        "serve_rendered": true
+      },
+      "RBT-BROWN": {
+        "style": "RBT-BROWN/style.json",
+        "serve_data": true,
+        "serve_rendered": true
+      },
+      "RBT-GRAY": {
+        "style": "RBT-GRAY/style.json",
+        "serve_data": true,
+        "serve_rendered": true
+      },
+      "RBT-DARK": {
+        "style": "RBT-DARK/style.json",
+        "serve_data": true,
+        "serve_rendered": true
+      },
+      "RBT-OVERLAY": {
+        "style": "RBT-OVERLAY/style.json",
+        "serve_data": true,
+        "serve_rendered": true
+      }
+    }
+  }
