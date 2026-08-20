@@ -83,7 +83,7 @@ Before cloning this repo, you will need to ensure **Git**, **Git Large File Stor
 
 ### Computer Requirements
 
-- Windows 11 (via WSL2) or Linux, as documented in this guide. macOS works with the Linux/Docker Desktop instructions but isn't covered step-by-step here.
+- Windows 11 (natively, or via WSL2) or Linux, as documented in this guide. macOS works with the Linux/Docker Desktop instructions but isn't covered step-by-step here.
 - Both container images (`maptiler/tileserver-gl` and `ghcr.io/mapproxy/mapproxy/mapproxy`) publish `linux/amd64` and `linux/arm64` builds, so this runs on Intel/AMD and Arm64 hosts alike (including Apple Silicon under Docker Desktop).
 - Disk space: enough for the two MBTiles files described in Phase 3 below, **plus** extra headroom for the MapProxy GeoPackage tile cache it builds over time as it fetches and caches tiles from TileserverGL. Ask the RBT team for current file sizes when you receive your S3 credentials -- the datasets are updated periodically, so we don't pin numbers here that would go stale.
 - Internet connection for downloading components and the MBTiles data
@@ -155,6 +155,65 @@ Replace `<rbt-bucket-path>` with the path the RBT team gives you. Both files are
 
 ```bash
 ls -lh tileserver/data/TERRAIN.mbtiles tileserver/data/RBT.mbtiles
+```
+
+
+
+## Automated Deployment
+
+The manual, step-by-step instructions below are also available as two scripts that automate every step -- prerequisite installation, downloading the MBTiles data, fixing runtime permissions/line endings, and starting the stack. Pick the one that matches how you're running this stack:
+
+- **Linux, or Windows 11 via WSL2**: [`deploy.sh`](deploy.sh) (Bash)
+- **Windows 11 natively, with no WSL2/Linux distribution**: [`deploy.ps1`](deploy.ps1) (PowerShell)
+
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy.
+
+### Linux and WSL2: `deploy.sh`
+
+Run this from a regular (non-root) Bash shell -- it escalates internally with `sudo` only for the specific steps that need root (`apt`, installing/starting Docker, `chown`):
+
+```bash
+S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
+```
+
+This installs the AWS CLI, Docker Engine + the Compose plugin, and Git/Git LFS if they're missing; downloads both MBTiles files into `tileserver/data/`; fixes `mapproxy`/`nginx` runtime directory permissions; and runs `docker compose up -d`.
+
+Useful variations:
+
+```bash
+./deploy.sh --init                # just install prerequisites
+./deploy.sh --download --perm     # just refresh data + permissions
+./deploy.sh --deploy               # just (re)start the stack
+./deploy.sh --force                # full run, force re-download
+./deploy.sh --no-nginx             # full run, skip the local nginx
+./deploy.sh --help                 # full flag/environment-variable reference
+```
+
+### Windows 11 native PowerShell: `deploy.ps1`
+
+This is for a **pure Windows 11 install with no WSL2 Linux distribution** -- it uses the [Chocolatey](https://chocolatey.org/) package manager to install AWS CLI v2, Git + Git LFS, and Docker Desktop (WSL2 engine), enabling only the underlying WSL2 platform that Docker Desktop's own internal VM needs (no Ubuntu or other distro). If you'd rather deploy inside a WSL2 Ubuntu distribution, use `deploy.sh` above -- see the [WSL2 setup option](#option-b-wsl2).
+
+Open **PowerShell as Administrator** (right-click Start menu -> "Terminal (Admin)"), `cd` into your clone of this repository, and run:
+
+```powershell
+$env:S3_BUCKET_RBT = 'my-bucket'
+$env:S3_BUCKET_TERRAIN = 'my-other-bucket'
+.\deploy.ps1
+```
+
+If PowerShell blocks the script with an execution-policy error, either run it through `powershell -ExecutionPolicy Bypass -File .\deploy.ps1` or, in that same Administrator session, run `Set-ExecutionPolicy -Scope Process Bypass` first.
+
+Only the `-Init` step (installing software, enabling the WSL2 platform) needs elevation; `-Download`, `-Prep`, and `-Deploy` do not. Enabling the WSL2 platform or installing Docker Desktop may ask you to reboot -- if so, restart Windows and re-run the same command; already-installed prerequisites are detected and skipped.
+
+Useful variations:
+
+```powershell
+.\deploy.ps1 -Init                  # just install prerequisites
+.\deploy.ps1 -Download -Prep        # just refresh data + runtime dirs
+.\deploy.ps1 -Deploy                 # just (re)start the stack
+.\deploy.ps1 -Force                  # full run, force re-download
+.\deploy.ps1 -NoNginx                # full run, skip the local nginx
+.\deploy.ps1 -Help                   # full flag/environment-variable reference
 ```
 
 
@@ -260,7 +319,83 @@ docker compose down --remove-orphans
 
 ## Windows 11 Setup
 
-RBT runs inside a Linux environment on Windows using **WSL2** (Windows Subsystem for Linux). Whether you choose Docker Desktop or Docker Engine below, every command in this section runs **inside your WSL2 Linux distribution**, not in PowerShell or `cmd.exe`.
+RBT supports two ways to run on Windows 11:
+
+- **Option A: Native Windows 11** -- installs everything directly on Windows via Chocolatey and Docker Desktop, with no WSL2 Linux distribution involved.
+- **Option B: WSL2** -- runs RBT inside a WSL2 Ubuntu distribution, the same way as the Linux instructions above.
+
+Both are fully supported; pick whichever fits how you already work on this machine. Each option below also has a one-command automated equivalent -- see [Automated Deployment](#automated-deployment) above.
+
+### Option A: Native Windows 11 (PowerShell + Chocolatey)
+
+This path installs everything directly on Windows using the [Chocolatey](https://chocolatey.org/) package manager and Docker Desktop -- no WSL2 Linux distribution is installed or used. Docker Desktop still relies on the WSL2 *platform* under the hood for its own internal Linux VM (that's normal, and required, even in this "native" path) -- but you never install or interact with a Linux distribution yourself, and every command below runs in PowerShell. This is the manual equivalent of running [`deploy.ps1`](deploy.ps1).
+
+#### Step 1: Install Chocolatey, prerequisites, and Docker Desktop
+
+Open **PowerShell as Administrator** (right-click Start menu -> "Terminal (Admin)" or "Windows PowerShell (Admin)"), then run:
+
+```powershell
+# Install Chocolatey (skip this if `choco --version` already works)
+Set-ExecutionPolicy Bypass -Scope Process -Force
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+# Install AWS CLI v2, and Git + Git LFS (NoAutoCrlf keeps checkouts
+# respecting this repo's .gitattributes -- see "A note on Git line
+# endings" below)
+choco install awscli -y
+choco install git -y --params "'/NoAutoCrlf'"
+
+# Enable the WSL2 platform with no Linux distribution -- Docker Desktop's
+# own internal VM is all that needs it
+wsl --install --no-distribution
+
+# Install Docker Desktop (WSL2 engine, the package's default)
+choco install docker-desktop -y
+```
+
+Restart Windows if either the `wsl --install` or Docker Desktop step asks you to, then continue below. After installing, either open a new PowerShell window (so it picks up the updated `PATH`) or run `refreshenv`.
+
+#### Step 2: Start Docker Desktop and confirm it's running
+
+Launch **Docker Desktop** from the Start menu and wait for it to report "Engine running", then confirm from PowerShell:
+
+```powershell
+docker --version
+docker compose version
+```
+
+Docker Desktop's installer adds you to the local `docker-users` group automatically; log out and back in if `docker` commands fail with a permissions error immediately after install.
+
+#### Step 3: Clone the repository
+
+```powershell
+git lfs install
+git clone https://github.com/mjj203/agc-rbt.git
+cd agc-rbt
+```
+
+Clone to a path on your `C:` drive (e.g. `C:\Users\<you>\agc-rbt`) rather than a network share or removable drive -- Docker Desktop's file sharing performs best on a local NTFS volume.
+
+#### Step 4: Prepare runtime directories and start RBT
+
+Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs. You do still need the runtime directories to exist, and this repo's config files need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
+
+```powershell
+# Download the map data (see Phase 3 above) before continuing, then
+# start the RBT stack from the agc-rbt directory
+docker compose up -d
+
+# Check logs
+docker compose logs -f
+
+# Stop the instance
+docker compose down --remove-orphans
+```
+
+### Option B: WSL2
+
+RBT runs inside a Linux environment on Windows using **WSL2** (Windows Subsystem for Linux). Whether you choose Docker Desktop or Docker Engine below, every command in the rest of this option runs **inside your WSL2 Linux distribution**, not in PowerShell or `cmd.exe`.
 
 ### Step 1: Enable WSL2
 
@@ -402,7 +537,7 @@ The first time you run `docker compose up -d`, Windows Defender Firewall may pro
 
 ### A note on Git line endings
 
-Windows' Git defaults to converting line endings on checkout (`core.autocrlf=true`). This repository's `[.gitattributes](.gitattributes)` forces the config files this stack depends on (`nginx.conf`, `uwsgi.ini`, `mapproxy.yaml`, and similar) to always check out with Unix (`LF`) line endings, since a `uwsgi.ini` saved with Windows (`CRLF`) line endings prevents uWSGI from starting. If you cloned this repository before this fix, run `git config --global core.autocrlf input` and re-clone to pick it up.
+Windows' Git defaults to converting line endings on checkout (`core.autocrlf=true`). This repository's [`.gitattributes`](.gitattributes) forces the config files this stack depends on (`nginx.conf`, `uwsgi.ini`, `mapproxy.yaml`, and similar) to always check out with Unix (`LF`) line endings, since a `uwsgi.ini` saved with Windows (`CRLF`) line endings prevents uWSGI from starting. If you cloned this repository before `.gitattributes` was added, either run `git config --global core.autocrlf input` and re-clone, or -- on native Windows (Option A) -- run `.\deploy.ps1 -Prep` to normalize the existing checkout in place without re-cloning.
 
 ## Common Issues and Solutions
 
@@ -420,14 +555,22 @@ This usually means the software isn't installed or isn't in your system's PATH.
 
 This means you need administrator privileges.
 
-- **Solution**: Add `sudo` before the command (on Linux), or make sure you're running inside WSL2 (on Windows)
+- **Solution**: Add `sudo` before the command (on Linux, or inside WSL2 on Windows), or on native Windows re-open PowerShell as Administrator (right-click Start menu -> "Terminal (Admin)")
 
 
 
 ### Docker Won't Start
 
-- **Windows**: Make sure Docker Desktop is running, or run `sudo service docker start` inside WSL2 if you're using Docker Engine directly
+- **Windows (native or WSL2)**: Make sure Docker Desktop is running (check the system tray) and has finished starting -- it can take a minute after launch. If you're using Docker Engine directly inside WSL2 instead of Docker Desktop, run `sudo service docker start`.
 - **Linux**: Try `sudo systemctl start docker`
+
+
+
+### `choco` Not Recognized, or the Script Is Blocked by Execution Policy (Native Windows)
+
+- **`choco` / `aws` / `docker` not recognized right after installing them**: Open a new PowerShell window so it picks up the updated `PATH`, or run `refreshenv` in the current one.
+- **"running scripts is disabled on this system"**: PowerShell's default execution policy blocks unsigned local scripts. Either run `powershell -ExecutionPolicy Bypass -File .\deploy.ps1`, or run `Set-ExecutionPolicy -Scope Process Bypass` once in that PowerShell session before calling `.\deploy.ps1` directly.
+- **`choco install ...` itself fails with an access-denied error**: Confirm you opened PowerShell as Administrator -- installing packages system-wide requires it.
 
 
 
@@ -453,27 +596,38 @@ This means the `mapproxy` container isn't listening where nginx expects it (`map
 
 ### `mapproxy` Container Exits, or Can't Write Its Cache
 
-This is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
+On **Linux or WSL2**, this is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
 
-- **Solution**: Re-run the `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks` step from the setup instructions above, then `docker compose restart mapproxy`.
-
-
-
-### Windows: Containers Are Extremely Slow, or Permission Changes Don't Stick
-
-- **Solution**: Confirm the repository is cloned inside your WSL2 filesystem (`~/agc-rbt`), not under `/mnt/c/...`. See "Clone into the WSL2 filesystem" in the Windows setup above.
+- **Solution (Linux/WSL2)**: Re-run the `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks` step from the setup instructions above, then `docker compose restart mapproxy`.
+- **Solution (native Windows)**: There's no uid/gid mismatch to fix here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories regardless of Windows ACLs. Instead, run `docker compose logs mapproxy` and check Docker Desktop's **Settings -> Resources -> File sharing** includes the drive you cloned this repository onto.
 
 
 
-### Windows: Docker or WSL2 Runs Out of Memory
+### Windows (WSL2): Containers Are Extremely Slow, or Permission Changes Don't Stick
 
-- **Solution**: Increase the `memory` value in `%UserProfile%\.wslconfig` (see "Give WSL2 enough memory" in the Windows setup above), then run `wsl --shutdown` and reopen your terminal.
+- **Solution**: Confirm the repository is cloned inside your WSL2 filesystem (`~/agc-rbt`), not under `/mnt/c/...`. See "Clone into the WSL2 filesystem" in the Windows setup above. (This doesn't apply to Option A/native Windows, which has no WSL2 filesystem boundary to cross.)
+
+
+
+### Windows: Docker Desktop or Its WSL2 Engine Runs Out of Memory
+
+Docker Desktop uses the WSL2 platform's shared utility VM for its engine on Windows, whether you're on Option A (native) or Option B (WSL2) -- so this applies to both.
+
+- **Solution**: Increase the `memory` value in `%UserProfile%\.wslconfig` (see "Give WSL2 enough memory" in the Windows setup above), then run `wsl --shutdown` and reopen Docker Desktop/your terminal.
 
 
 
 ### uWSGI Fails to Start, or Config Changes Have No Effect
 
-- **Solution**: Check for Windows-style line endings: run `file mapproxy/config/uwsgi.ini` inside WSL2/Linux and look for `CRLF`. If present, see "A note on Git line endings" in the Windows setup above.
+- **Solution (Linux/WSL2)**: Check for Windows-style line endings: run `file mapproxy/config/uwsgi.ini` and look for `CRLF`. If present, see "A note on Git line endings" in the Windows setup above.
+- **Solution (native Windows)**: Run `Get-Content mapproxy/config/uwsgi.ini -Raw` in PowerShell and check whether it contains `` `r`n `` (CRLF) instead of plain `` `n `` -- or simply re-run `.\deploy.ps1 -Prep`, which normalizes this file (and the other config files) to LF automatically.
+
+
+
+### Native Windows: Reboot Requested, or `docker` Fails with a Permissions Error Right After Install
+
+- **A reboot prompt appeared during `-Init` / `choco install docker-desktop` / `wsl --install`**: This is expected the first time either the WSL2 platform or Docker Desktop is installed. Restart Windows, then re-run the same `deploy.ps1` command (or the manual step you were on) -- already-installed prerequisites are detected and skipped.
+- **`docker` commands fail with a permissions/access-denied error immediately after installing Docker Desktop**: You were added to the local `docker-users` group as part of the install, but Windows only applies new group membership to new sign-ins. Log out and back in (or reboot), then try again.
 
 
 
@@ -483,7 +637,7 @@ This is almost always a file-permission mismatch between the host directories an
 
 ### How to Know It's Working
 
-Run these checks from the machine running Docker (inside WSL2 on Windows). Each command's expected result is listed underneath it.
+Run these checks from the machine running Docker -- inside WSL2 on Windows Option B, or directly in PowerShell on native Windows Option A. Each command's expected result is listed underneath it. The `bash` examples below work as-is in WSL2/Linux; on native Windows PowerShell, run the same `docker compose`/`curl.exe` commands (PowerShell 5.1 aliases bare `curl` to `Invoke-WebRequest`, which takes different flags, so use `curl.exe` explicitly there).
 
 ```bash
 docker compose ps
@@ -505,6 +659,12 @@ Expect: a JSON array listing `RBT-TOPO`, `RBT-LIGHT`, `RBT-BROWN`, `RBT-GRAY`, `
 
 ```bash
 curl -fsS "http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml" | head -20
+```
+
+On native Windows PowerShell, the equivalent is:
+
+```powershell
+(curl.exe -fsS "http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml") -split "`n" | Select-Object -First 20
 ```
 
 Expect: an XML document starting with `<Capabilities` that lists layers such as `rbt_topo_3857`, `rbt_dark_3857`, and `rbt_overlay_3857`.
@@ -622,6 +782,8 @@ Everything above assumes the local nginx service is fronting MapProxy and Tilese
 docker compose -f docker-compose.yaml up -d
 # or, using deploy.sh:
 ./deploy.sh --no-nginx
+# or, on native Windows, using deploy.ps1:
+.\deploy.ps1 -NoNginx
 ```
 
 nginx normally comes from `docker-compose.override.yaml`, which Docker Compose merges in automatically whenever you run `docker compose ...` with no explicit `-f` flags -- that's why the plain `docker compose up -d` used everywhere else in this guide still includes it. Naming `-f docker-compose.yaml` explicitly (as above) opts out of that auto-merge.
