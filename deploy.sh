@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Bootstrap an Ubuntu host and deploy the RBT Docker Compose stack. See
-# README.md for the manual equivalent of each step, or run with --help.
+# Bootstrap a macOS or Linux (Ubuntu/Debian or Fedora/RHEL) host and deploy
+# the RBT Docker Compose stack. See README.md for the manual equivalent of
+# each step, or run with --help.
 #
 #   S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
 
@@ -23,17 +24,20 @@ die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-deploy.sh - Bootstrap an Ubuntu host and deploy the RBT Docker Compose stack.
+deploy.sh - Bootstrap a macOS or Linux host and deploy the RBT Docker Compose stack.
 
 With no flags, all four steps below run in order. Pass one or more step
 flags to run only those steps (still in the order listed here, regardless
 of the order given on the command line):
 
-  --init      Install prerequisites: AWS CLI v2, Docker Engine + Compose
-              plugin, git/git-lfs.
+  --init      Install prerequisites: AWS CLI v2, Docker (Docker Desktop on
+              macOS; Docker Engine + Compose plugin on Linux), git/git-lfs.
+              Uses Homebrew on macOS, apt on Ubuntu/Debian, or dnf on
+              Fedora/RHEL, whichever this host's /etc/os-release identifies.
   --download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
               tileserver/data/.
-  --perm      Fix mapproxy/nginx runtime directory permissions.
+  --perm      Fix mapproxy/nginx runtime directory permissions (a no-op on
+              macOS -- see below).
   --deploy    Run `docker compose up -d`.
   --force     Re-download mbtiles even if already present (only relevant
               together with --download, or with no step flags).
@@ -52,14 +56,18 @@ Usage:
   ./deploy.sh --force               # full run, force re-download
   ./deploy.sh --no-nginx            # full run, skip the local nginx
 
-Run this as your normal (non-root) user, not via `sudo` -- it escalates
-internally with sudo only for the specific steps that need root (apt,
-installing/starting Docker, chown). Running it unprivileged means
-`aws s3 cp` uses your own AWS credential chain (env vars, ~/.aws/credentials,
-AWS_PROFILE, or an EC2/ECS instance role) exactly as it would outside this
-script -- nothing here configures AWS credentials for you.
+Run this as your normal (non-root) user, not via `sudo`. On Linux it
+escalates internally with sudo only for the specific steps that need root
+(apt/dnf, installing/starting Docker, chown). On macOS nothing here uses
+sudo -- Homebrew and Docker Desktop both install and run as your normal
+user. Either way, running it unprivileged means `aws s3 cp` uses your own
+AWS credential chain (env vars, ~/.aws/credentials, AWS_PROFILE, or an
+EC2/ECS instance role) exactly as it would outside this script -- nothing
+here configures AWS credentials for you.
 
-Required environment variables (only enforced when the download step runs):
+Required environment variables (only enforced when the download step runs;
+a value already set in the environment takes precedence over the same key
+in .env):
   S3_BUCKET_RBT      Bucket (optionally with a prefix), no filename, e.g.
                       "my-bucket" or "s3://my-bucket/exports". Must contain
                       RBT.mbtiles.
@@ -74,15 +82,106 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Environment file (.env)
+# ---------------------------------------------------------------------------
+
+# Loads simple KEY=VALUE lines from .env (if present) into the environment,
+# the same file docker-compose.yaml/docker-compose.override.yaml already
+# auto-load via Compose's own .env support. Comments and blank lines are
+# skipped, one layer of surrounding quotes is stripped, and a key already
+# set in the environment is left alone -- shell exports always win over
+# .env, matching Compose's own precedence.
+load_env_file() {
+  local env_file="$SCRIPT_DIR/.env"
+  [[ -f "$env_file" ]] || return 0
+
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*($|#) ]] && continue
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+
+    if [[ "$value" =~ ^\"(.*)\"$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    elif [[ "$value" =~ ^\'(.*)\'$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    fi
+
+    [[ -z "${!key:-}" ]] && export "$key=$value"
+  done < "$env_file"
+}
+
+# ---------------------------------------------------------------------------
 # Prerequisites
 # ---------------------------------------------------------------------------
 
-install_aws_cli() {
-  if command -v aws >/dev/null 2>&1; then
-    log "AWS CLI already installed ($(aws --version 2>&1)); skipping"
+# Prints "macos", "ubuntu", "fedora", or "unknown". Debian/Ubuntu and
+# Fedora/RHEL derivatives are grouped by /etc/os-release's ID_LIKE so close
+# relatives (e.g. Pop!_OS, Rocky Linux) still get a supported prereqs path.
+detect_os() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "macos"
     return
   fi
 
+  if [[ -f /etc/os-release ]]; then
+    local ids
+    # shellcheck disable=SC1091
+    ids="$(. /etc/os-release && echo "${ID:-} ${ID_LIKE:-}")"
+    case " $ids " in
+      *" fedora "*|*" rhel "*) echo "fedora"; return ;;
+      *" debian "*|*" ubuntu "*) echo "ubuntu"; return ;;
+    esac
+  fi
+
+  echo "unknown"
+}
+
+install_homebrew() {
+  if command -v brew >/dev/null 2>&1; then
+    return
+  fi
+
+  log "Installing Homebrew (brew.sh)"
+  # Official bootstrap command from https://brew.sh -- runs a trusted,
+  # versioned installer script served from Homebrew's own repo.
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+
+  command -v brew >/dev/null 2>&1 || die "Homebrew install appears to have failed -- 'brew' is still not on PATH."
+}
+
+install_base_packages() {
+  case "$OS_FAMILY" in
+    macos)
+      install_homebrew
+      log "Installing Git and Git LFS (brew packages: git, git-lfs)"
+      brew install git git-lfs
+      ;;
+    fedora)
+      log "Installing base packages"
+      "${SUDO[@]}" dnf install -y unzip git-all git-lfs
+      ;;
+    ubuntu)
+      log "Updating apt package lists"
+      export DEBIAN_FRONTEND=noninteractive
+      "${SUDO[@]}" apt-get update
+      log "Installing base packages"
+      "${SUDO[@]}" apt-get install -y ca-certificates curl gnupg lsb-release unzip git git-lfs
+      ;;
+    *)
+      die "Don't know how to install prerequisites on this OS. See docs/install-macos.md, docs/install-linux.md, or docs/install-windows.md for manual install instructions, or install aws, docker, git, and git-lfs yourself and re-run with --download --perm --deploy."
+      ;;
+  esac
+}
+
+install_aws_cli_linux() {
   log "Installing AWS CLI v2"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
@@ -94,12 +193,33 @@ install_aws_cli() {
   "${SUDO[@]}" "$tmp_dir/aws/install"
 }
 
-install_docker() {
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    log "Docker + Compose plugin already installed ($(docker --version)); skipping"
+install_aws_cli() {
+  if command -v aws >/dev/null 2>&1; then
+    log "AWS CLI already installed ($(aws --version 2>&1)); skipping"
     return
   fi
 
+  if [[ "$OS_FAMILY" == "macos" ]]; then
+    log "Installing AWS CLI v2 (brew package: awscli)"
+    brew install awscli
+  else
+    install_aws_cli_linux
+  fi
+}
+
+# Group membership only takes effect in new sessions, so this is a
+# convenience for future logins -- docker compose below still runs via
+# sudo so this script works correctly on the very first run. Uses `id -un`
+# rather than $SUDO_USER/$USER so this still works when neither is set.
+add_current_user_to_docker_group() {
+  local target_user="${SUDO_USER:-$(id -un)}"
+  if ! id -nG "$target_user" | grep -qw docker; then
+    "${SUDO[@]}" usermod -aG docker "$target_user"
+    warn "Added $target_user to the docker group -- log out/in (or run 'newgrp docker') to run docker without sudo outside this script."
+  fi
+}
+
+install_docker_linux_apt() {
   log "Removing old/conflicting Docker packages (if any)"
   "${SUDO[@]}" apt-get remove -y docker docker-engine docker.io containerd runc || true
 
@@ -117,14 +237,77 @@ install_docker() {
 
   log "Enabling the Docker service"
   "${SUDO[@]}" systemctl enable --now docker
+}
 
-  # Group membership only takes effect in new sessions, so this is a
-  # convenience for future logins -- docker compose below still runs via
-  # sudo so this script works correctly on the very first run.
-  if [[ -n "${SUDO_USER:-}" ]] && ! id -nG "$SUDO_USER" | grep -qw docker; then
-    "${SUDO[@]}" usermod -aG docker "$SUDO_USER"
-    warn "Added $SUDO_USER to the docker group -- log out/in (or run 'newgrp docker') to run docker without sudo outside this script."
+install_docker_linux_dnf() {
+  log "Removing old/conflicting Docker packages (if any)"
+  "${SUDO[@]}" dnf remove -y docker docker-client docker-client-latest docker-common \
+    docker-latest docker-latest-logrotate docker-logrotate docker-selinux \
+    docker-engine-selinux docker-engine || true
+
+  log "Adding Docker's official dnf repository"
+  "${SUDO[@]}" dnf -y install dnf-plugins-core
+  "${SUDO[@]}" dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+
+  log "Installing Docker Engine and the Compose plugin"
+  "${SUDO[@]}" dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  log "Enabling the Docker service"
+  "${SUDO[@]}" systemctl enable --now docker
+}
+
+# Docker Desktop's first launch after install may need a one-time,
+# non-scriptable GUI step (accepting the license, granting privileged-helper
+# access) -- if the engine isn't up within the timeout, we bail with
+# instructions to finish that manually and re-run, the same way deploy.ps1
+# handles the equivalent first-run prompt on Windows.
+start_docker_desktop_and_wait_macos() {
+  if docker info >/dev/null 2>&1; then
+    log "Docker engine is already running"
+    return
   fi
+
+  log "Starting Docker Desktop (first start can take a minute or two)"
+  open -a Docker || warn "Could not launch Docker Desktop automatically; start it from Launchpad if it is not already running."
+
+  local max_wait_seconds=180 waited=0
+  while (( waited < max_wait_seconds )); do
+    if docker info >/dev/null 2>&1; then
+      log "Docker engine is up"
+      return
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+
+  die "Docker engine did not become ready within ${max_wait_seconds}s. Open Docker Desktop manually (finishing any first-run setup prompts), wait for it to report 'Engine running', then re-run ./deploy.sh."
+}
+
+install_docker_desktop_macos() {
+  log "Installing Docker Desktop (brew cask: docker-desktop)"
+  brew install --cask docker-desktop
+  start_docker_desktop_and_wait_macos
+}
+
+install_docker() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    log "Docker + Compose plugin already installed ($(docker --version)); skipping"
+    return
+  fi
+
+  case "$OS_FAMILY" in
+    macos)
+      install_docker_desktop_macos
+      ;;
+    fedora)
+      install_docker_linux_dnf
+      add_current_user_to_docker_group
+      ;;
+    *)
+      install_docker_linux_apt
+      add_current_user_to_docker_group
+      ;;
+  esac
 }
 
 prereqs_installed() {
@@ -141,13 +324,7 @@ install_prereqs() {
     return
   fi
 
-  log "Updating apt package lists"
-  export DEBIAN_FRONTEND=noninteractive
-  "${SUDO[@]}" apt-get update
-
-  log "Installing base packages"
-  "${SUDO[@]}" apt-get install -y ca-certificates curl gnupg lsb-release unzip git git-lfs
-
+  install_base_packages
   install_aws_cli
   install_docker
 
@@ -176,6 +353,44 @@ s3_object_key() {
   esac
 }
 
+# Portable stat/date helpers -- GNU coreutils (Linux) and BSD (macOS) accept
+# different flags for both. `file_mtime_epoch`/`format_epoch` cover the
+# stat/date-formatting direction; `parse_iso8601_epoch` covers parsing S3's
+# LastModified timestamp back into epoch seconds.
+
+file_mtime_epoch() {
+  if [[ "$OS_FAMILY" == "macos" ]]; then
+    stat -f %m "$1"
+  else
+    stat -c %Y "$1"
+  fi
+}
+
+format_epoch() {
+  if [[ "$OS_FAMILY" == "macos" ]]; then
+    TZ=UTC date -j -f %s "$1"
+  else
+    date -d "@$1"
+  fi
+}
+
+# Converts an S3 LastModified timestamp (e.g. "2026-08-20T12:34:56+00:00" or
+# "...Z") to epoch seconds. GNU `date -d` parses this directly; BSD/macOS
+# `date -j -f` can't parse the trailing offset, so strip fractional seconds
+# and the timezone suffix and parse the remainder as UTC -- S3 LastModified
+# is always UTC regardless of which suffix style it's rendered with.
+parse_iso8601_epoch() {
+  local input="$1"
+  if [[ "$OS_FAMILY" == "macos" ]]; then
+    local stripped="${input%%.*}"
+    stripped="${stripped%%+*}"
+    stripped="${stripped%Z}"
+    TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%S" "$stripped" +%s
+  else
+    date -d "$input" +%s
+  fi
+}
+
 # Prints the epoch seconds of an S3 object's LastModified time on stdout, or
 # nothing (with a non-zero exit) if it can't be read -- e.g. missing object,
 # or an IAM policy that allows GetObject but not this HeadObject call.
@@ -186,7 +401,7 @@ remote_mtime_epoch() {
     --key "$(s3_object_key "$remote_uri")" \
     --query 'LastModified' --output text 2>/dev/null)" || return 1
   [[ -n "$last_modified" && "$last_modified" != "None" ]] || return 1
-  date -d "$last_modified" +%s
+  parse_iso8601_epoch "$last_modified"
 }
 
 # check_remote=1 re-downloads whenever the S3 object's LastModified is newer
@@ -213,9 +428,9 @@ fetch_mbtiles() {
   else
     local remote_epoch local_epoch
     if remote_epoch="$(remote_mtime_epoch "$remote_uri")"; then
-      local_epoch="$(stat -c %Y "$dest")"
+      local_epoch="$(file_mtime_epoch "$dest")"
       if [[ "$remote_epoch" -gt "$local_epoch" ]]; then
-        log "$filename in S3 was modified $(date -d "@$remote_epoch") (newer than the local copy); re-downloading"
+        log "$filename in S3 was modified $(format_epoch "$remote_epoch") (newer than the local copy); re-downloading"
         need_download=1
       else
         log "$filename is already up to date with S3; skipping (use --force to re-download)"
@@ -244,12 +459,18 @@ download_mbtiles() {
 }
 
 # ---------------------------------------------------------------------------
-# Permissions (see README.md "Linux Setup" -- mapproxy's image runs as uid/gid 1000)
+# Permissions (see docs/install-linux.md -- mapproxy's image runs as uid/gid 1000)
 # ---------------------------------------------------------------------------
 
 fix_permissions() {
   log "Setting mapproxy/nginx runtime directory permissions"
   mkdir -p mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+
+  if [[ "$OS_FAMILY" == "macos" ]]; then
+    log "Skipping chown/chmod on macOS -- Docker Desktop's VirtioFS file sharing maps the host user into the container, so there's no uid/gid mismatch to fix"
+    return
+  fi
+
   "${SUDO[@]}" chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
   "${SUDO[@]}" chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
 }
@@ -279,6 +500,8 @@ deploy_stack() {
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+load_env_file
 
 RUN_INIT=0
 RUN_DOWNLOAD=0
@@ -328,23 +551,29 @@ if [[ "$STEP_SELECTED" -eq 0 ]]; then
   RUN_DEPLOY=1
 fi
 
-if [[ $EUID -eq 0 ]]; then
+OS_FAMILY="$(detect_os)"
+
+if [[ "$OS_FAMILY" == "macos" ]]; then
+  # Homebrew and Docker Desktop both install and run as the normal user;
+  # nothing in the macOS code paths below needs (or should use) sudo.
+  SUDO=()
+elif [[ $EUID -eq 0 ]]; then
   SUDO=()
 else
   command -v sudo >/dev/null 2>&1 || die "This script needs root privileges for some steps. Install sudo or run as root."
   SUDO=(sudo)
 fi
 
-if [[ -f /etc/os-release ]] && ! grep -qi ubuntu /etc/os-release; then
-  warn "/etc/os-release doesn't identify this host as Ubuntu; continuing anyway."
+if [[ "$OS_FAMILY" == "unknown" ]]; then
+  warn "Could not identify this host as macOS, Ubuntu/Debian, or Fedora/RHEL. --init will stop with an error if it doesn't know how to install prerequisites here; --download, --perm, and --deploy should still work as long as aws, docker, git, and git-lfs are already installed."
 fi
 
 [[ -f "$SCRIPT_DIR/docker-compose.yaml" ]] ||
-  die "docker-compose.yaml not found next to this script -- run it from inside the agc-rbt repo checkout."
+  die "docker-compose.yaml not found next to this script -- run it from inside the rbt-local repo checkout."
 
 if [[ "$RUN_DOWNLOAD" -eq 1 ]]; then
-  : "${S3_BUCKET_RBT:?Set S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. S3_BUCKET_RBT=my-bucket}"
-  : "${S3_BUCKET_TERRAIN:?Set S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles}"
+  : "${S3_BUCKET_RBT:?Set S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. S3_BUCKET_RBT=my-bucket -- or add it to .env (see .env.example)}"
+  : "${S3_BUCKET_TERRAIN:?Set S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles -- or add it to .env (see .env.example)}"
 fi
 
 if [[ "$RUN_INIT" -eq 1 ]]; then

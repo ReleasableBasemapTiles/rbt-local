@@ -6,8 +6,8 @@
 #
 #   $env:S3_BUCKET_RBT = 'my-bucket'; $env:S3_BUCKET_TERRAIN = 'my-other-bucket'; .\deploy.ps1
 #
-# Mirrors deploy.sh's steps and flags for Linux/WSL2 hosts; see that script
-# (and this repo's README "Automated Deployment" section) for the Bash
+# Mirrors deploy.sh's steps and flags for macOS/Linux/WSL2 hosts; see that
+# script (and this repo's README "Quickstart" section) for the Bash
 # equivalent.
 
 [CmdletBinding()]
@@ -69,7 +69,9 @@ credential chain (%USERPROFILE%\.aws\credentials, environment variables, or
 AWS_PROFILE) exactly as it would in a non-elevated shell -- nothing here
 configures AWS credentials for you.
 
-Required environment variables (only enforced when the download step runs):
+Required environment variables (only enforced when the download step runs;
+a value already set in the environment takes precedence over the same key
+in .env):
   S3_BUCKET_RBT      Bucket (optionally with a prefix), no filename, e.g.
                       "my-bucket" or "s3://my-bucket/exports". Must contain
                       RBT.mbtiles.
@@ -146,6 +148,42 @@ function Update-Path {
     $machinePath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = "$machinePath;$userPath"
+}
+
+# Loads simple KEY=VALUE lines from .env (if present) into the process
+# environment, the same file docker-compose.yaml/docker-compose.override.yaml
+# already auto-load via Compose's own .env support. Comments and blank lines
+# are skipped, one layer of surrounding quotes is stripped, and a key already
+# set in the environment is left alone -- shell/session variables always win
+# over .env, matching Compose's own precedence. Mirrors deploy.sh's
+# load_env_file for parity across platforms.
+function Import-DotEnv {
+    $envFile = Join-RepoPath '.env'
+    if (-not (Test-Path $envFile -PathType Leaf)) {
+        return
+    }
+
+    foreach ($line in Get-Content -Path $envFile) {
+        if ($line -match '^\s*($|#)') {
+            continue
+        }
+        if ($line -notmatch '^\s*(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            continue
+        }
+        $key = $Matches[2]
+        $value = $Matches[3]
+
+        if ($value -match '^"(.*)"$') {
+            $value = $Matches[1]
+        } elseif ($value -match "^'(.*)'$") {
+            $value = $Matches[1]
+        }
+
+        $existing = [System.Environment]::GetEnvironmentVariable($key)
+        if ([string]::IsNullOrEmpty($existing)) {
+            Set-Item -Path "env:$key" -Value $value
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -454,9 +492,9 @@ function Get-AllMbtiles {
 }
 
 # ---------------------------------------------------------------------------
-# Prep (see README.md "Windows 11 Setup" -- Docker Desktop's Linux VM writes
-# to bind-mounted host directories regardless of Windows ACLs, so there is
-# no chown/chmod equivalent needed here, unlike deploy.sh's fix_permissions)
+# Prep (see docs/install-windows.md -- Docker Desktop's Linux VM writes to
+# bind-mounted host directories regardless of Windows ACLs, so there is no
+# chown/chmod equivalent needed here, unlike deploy.sh's fix_permissions)
 # ---------------------------------------------------------------------------
 
 function Initialize-RuntimeDirectories {
@@ -565,6 +603,8 @@ if ([string]::IsNullOrEmpty($script:ScriptDir)) {
 }
 Set-Location -Path $script:ScriptDir
 
+Import-DotEnv
+
 $script:DataDir = Join-RepoPath 'tileserver/data'
 $script:RbtFile = Join-Path $script:DataDir 'RBT.mbtiles'
 $script:TerrainFile = Join-Path $script:DataDir 'TERRAIN.mbtiles'
@@ -611,10 +651,10 @@ if ($runInit -and -not (Test-IsAdministrator)) {
 
 if ($runDownload) {
     if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_RBT)) {
-        Write-ErrorAndExit 'Set $env:S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. $env:S3_BUCKET_RBT = ''my-bucket'''
+        Write-ErrorAndExit 'Set $env:S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. $env:S3_BUCKET_RBT = ''my-bucket'' -- or add it to .env (see .env.example)'
     }
     if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_TERRAIN)) {
-        Write-ErrorAndExit 'Set $env:S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles'
+        Write-ErrorAndExit 'Set $env:S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles -- or add it to .env (see .env.example)'
     }
 }
 
