@@ -1,0 +1,18 @@
+# This stack's config files must always check out with Unix (LF) line
+# endings, regardless of the cloning machine's git config (e.g. Windows'
+# common core.autocrlf=true) -- a uwsgi.ini saved with Windows (CRLF) line
+# endings prevents uWSGI from starting (see README.md "A note on Git line
+# endings", and deploy.ps1's -Prep step, which repairs clones made before
+# this file existed).
+* text=auto
+
+*.ini   text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.conf  text eol=lf
+*.json  text eol=lf
+*.sh    text eol=lf
+
+*.png     binary
+*.pbf     binary
+*.mbtiles binary

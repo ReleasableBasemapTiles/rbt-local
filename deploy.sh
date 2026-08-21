@@ -249,6 +249,7 @@ download_mbtiles() {
 
 fix_permissions() {
   log "Setting mapproxy/nginx runtime directory permissions"
+  mkdir -p mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
   "${SUDO[@]}" chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
   "${SUDO[@]}" chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
 }
