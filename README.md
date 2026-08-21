@@ -1,827 +1,94 @@
 # Releasable Basemap Tiles (RBT)
 
-## What is RBT?
+RBT (Releasable Basemap Tiles) is a web application that provides map tiles for military and coalition partners. Think of it like Google Maps, but designed for military use with maps that can be safely shared internationally -- vector tiles instead of the older raster formats (like CADRG), for smaller files, sharper rendering at any zoom, and easier coalition sharing. See [Architecture](docs/architecture.md) for the full explanation, the technical design, and a diagram.
 
-RBT (Releasable Basemap Tiles) is a web application that provides map tiles for military and coalition partners. Think of it like Google Maps, but designed for military use with maps that can be safely shared internationally.
+This guide walks through deploying RBT with **Docker Compose** on a single host (a workstation, VM, or on-premises server) running **macOS**, **Windows 11**, or **Linux**. Don't worry if you're new to any of these tools -- each command below is meant to be copied and pasted, one at a time.
 
-### Why RBT is Better Than Older Map Systems
+## Requirements
 
-RBT uses **Vector Tiles** instead of the older **Raster Tiles** (like CADRG - Compressed ARC Digitized Raster Graphics) that the military has traditionally used. Here's why this matters:
+- macOS, Windows 11 (natively, or via WSL2), or Linux
+- Both container images this stack uses (`maptiler/tileserver-gl` and `ghcr.io/mapproxy/mapproxy/mapproxy`) publish `linux/amd64` and `linux/arm64` builds, so this runs on Intel/AMD and Arm64 hosts alike (including Apple Silicon)
+- Internet connection, for downloading components and the MBTiles data
+- Minimum 16GB of RAM and 8 cores CPU recommended
+- Disk space: enough for the two MBTiles files described below, **plus** headroom for the MapProxy tile cache it builds over time. Ask the RBT team for current file sizes when you receive your S3 credentials -- the datasets are updated periodically, so we don't pin numbers here that would go stale
 
-**Think of it like this:**
-
-- **Raster tiles (old way)** are like digital photographs of maps - they're made of pixels and have a fixed size and quality
-- **Vector tiles (RBT's way)** are like digital drawings made of mathematical shapes and text that can be resized perfectly
-
-**Key Advantages of Vector Tiles:**
-
-🎯 **Better Quality at Any Zoom Level**
-
-- Raster: Text becomes blurry when you zoom in (like enlarging a photo)
-- Vector: Text and lines stay crisp at any zoom level
-
-📦 **Smaller File Sizes**
-
-- Raster: Large image files that take up lots of storage and bandwidth
-- Vector: Compact mathematical descriptions that are 60-80% smaller
-
-🌐 **Works Better Offline**
-
-- Raster: Need to download many large image files for different zoom levels
-- Vector: Download once, works smoothly at all zoom levels
-
-⚡ **Faster Loading**
-
-- Raster: Must load new images when zooming or panning
-- Vector: Smooth transitions because data is already there
-
-🎨 **Customizable Appearance**
-
-- Raster: Fixed colors and styles (what you see is what you get)
-- Vector: Can change colors, hide/show layers, adjust for day/night use
-
-🔄 **Better for Coalition Sharing**
-
-- Smaller files mean faster transfer over military networks
-- Single vector dataset works for multiple use cases (instead of separate raster sets)
-- Partners can customize the display for their specific needs
-
-This makes RBT particularly valuable for military operations where bandwidth is limited, storage space is precious, and maps need to work reliably in various conditions.
-
-## What You'll Need
-
-This application runs using Docker, which is like a virtual container that packages everything needed to run the software. Don't worry if you're new to these tools - we'll guide you through each step.
-
-The Releasable Basemap Tiles (RBT) is important because the capability can be easily shared with international coalition partners and doesn't need to go through the current approval process associated with traditional Limited Distribution (LIMDIS) data. The RBT is based on modern technology and provides access to like-in-kind Standard Map Products such as Topographic Map (TM), Joint Operations Graphic (JOG), and Tactical Pilotage Chart (TPC) in Vector Tiles format. This format enables rapid transfer across a network or accessed offline from a tile cache. By implementing simple changes in how modern maps are produced and accessed, international coalition partners will be able to track plans and activities using the same basemaps as U.S. services without delays associated with release of classified information.
-
-## How It Works (Simple Version)
-
-RBT uses several components working together:
-
-- **TileserverGL**: Serves the map tiles (the actual map images)
-- **MapProxy**: Helps convert between different map formats  
-- **Docker**: Packages everything together so it runs the same on any computer
-- **Kubernetes/Docker Compose**: Tools that manage and run the application
-
-
-
-# Architecture
-
-RBT is deployed as a containerized application using [TileserverGL](https://github.com/maptiler/tileserver-gl), which uses [MapLibre GL Native](https://maplibre.org/) for server-side rendering and serves vector and raster tiles in **EPSG:3857** (Web Mercator). Additionally, [MapProxy](https://mapproxy.org/) is deployed in front of TileserverGL to cache those raster tiles, exposing them through standard OGC WMS/WMTS endpoints, also in **EPSG:3857**.
-
-This guide documents a **Docker Compose** deployment suitable for a single host (a workstation, VM, or on-premises server) running Windows 11 or Linux. You will need S3 credentials from the RBT team to download the MBTiles data that TileserverGL serves.
-
-![RBT_ARCHITECTURE](images/rbt_architecture.png)
-
-# Installation
-
-Before cloning this repo, you will need to ensure **Git**, **Git Large File Storage (LFS)**, **AWSCLI**, and **Docker** are installed and enabled on your system.
-
-## Before You Start
-
-
-
-### Computer Requirements
-
-- Windows 11 (natively, or via WSL2) or Linux, as documented in this guide. macOS works with the Linux/Docker Desktop instructions but isn't covered step-by-step here.
-- Both container images (`maptiler/tileserver-gl` and `ghcr.io/mapproxy/mapproxy/mapproxy`) publish `linux/amd64` and `linux/arm64` builds, so this runs on Intel/AMD and Arm64 hosts alike (including Apple Silicon under Docker Desktop).
-- Disk space: enough for the two MBTiles files described in Phase 3 below, **plus** extra headroom for the MapProxy GeoPackage tile cache it builds over time as it fetches and caches tiles from TileserverGL. Ask the RBT team for current file sizes when you receive your S3 credentials -- the datasets are updated periodically, so we don't pin numbers here that would go stale.
-- Internet connection for downloading components and the MBTiles data
-- Minimum 16GB of RAM recommended
-- Minimum 8 cores CPU recommended
-
-
-
-### Skills You'll Need
-
-- Basic familiarity with using a terminal/command prompt
-- Ability to copy and paste commands
-- Don't worry if you're new to this - we'll guide you through each step!
-
-
-
-### What If I Get Stuck?
-
-- Each command should be run one at a time
-- If you see an error, don't panic - scroll down to our Troubleshooting section
-- Commands that start with `sudo` may ask for your password
-
-
-
-## Installation Guide
-
-
-
-### Phase 1: Get Permission and Credentials
+## Get S3 Credentials
 
 Before starting, you need special access to download the map data:
 
-1. Email [Tom Boggess](Thomas.J.Boggess@usace.army.mil) to request S3 credentials
-2. Wait for approval and credentials (this may take a few days)
+1. Email [Tom Boggess](mailto:Thomas.J.Boggess@usace.army.mil) to request S3 credentials
+2. Wait for approval and credentials (this may take a few days -- a good first step while you read the rest of this guide)
 3. Once you receive credentials, configure AWS CLI by running:
-  ```
+   ```bash
    aws configure --profile rbt
-  ```
+   ```
    Enter the provided Access Key ID, Secret Access Key, and set the region to `us-east-1`
 
+You'll use these credentials to download two files -- `RBT.mbtiles` and `TERRAIN.mbtiles` -- which `tileserver/config/config.json` references by these exact names. The Quickstart below downloads both automatically once your credentials and bucket paths are in place.
 
+## Quickstart
 
-### Phase 2: Install Required Software
+1. **Install Git** if you don't already have it (most Macs and Linux systems do; on Windows 11 try `winget install Git.Git`, or see the per-OS guide below), then clone this repository and open a terminal inside it:
 
-You need to install several tools. Don't worry - we'll explain what each one does:
+   ```bash
+   git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git
+   cd rbt-local
+   ```
 
-#### What is AWS CLI?
+2. **Copy `.env.example` to `.env`**, and fill in `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` with the bucket paths the RBT team gave you alongside your credentials.
 
-AWS CLI is a tool that lets you download files from Amazon's cloud storage (where our map data is stored).
+3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data, and starts RBT -- no other manual steps required.
 
-#### What is Git?
+   **macOS or Linux:**
 
-Git is a tool for downloading and managing code projects. Git LFS handles large files.
+   ```bash
+   ./deploy.sh
+   ```
 
-#### What is Docker?
+   **Windows 11**, in PowerShell opened as Administrator:
 
-Docker packages applications so they run consistently on any computer.
+   ```powershell
+   .\deploy.ps1
+   ```
 
-### Phase 3: Download the Map Data
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, or `--no-nginx`/`-NoNginx` to skip the local reverse proxy (see [Advanced: Deploying Without nginx](docs/advanced-deployment.md)).
 
-After installing the software and cloning the repository, download the two MBTiles files into `tileserver/data/` using the S3 credentials from Phase 1. The RBT team will give you the exact bucket path; the download commands look like this:
+Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
-```bash
-aws s3 cp s3://<rbt-bucket-path>/TERRAIN.mbtiles tileserver/data/TERRAIN.mbtiles --profile rbt
-aws s3 cp s3://<rbt-bucket-path>/RBT.mbtiles tileserver/data/RBT.mbtiles --profile rbt
-```
+## Verifying It's Working
 
-Replace `<rbt-bucket-path>` with the path the RBT team gives you. Both files are required -- `tileserver/config/config.json` references them by these exact names. Confirm both are in place before starting the stack:
-
-```bash
-ls -lh tileserver/data/TERRAIN.mbtiles tileserver/data/RBT.mbtiles
-```
-
-
-
-## Automated Deployment
-
-The manual, step-by-step instructions below are also available as two scripts that automate every step -- prerequisite installation, downloading the MBTiles data, fixing runtime permissions/line endings, and starting the stack. Pick the one that matches how you're running this stack:
-
-- **Linux, or Windows 11 via WSL2**: [`deploy.sh`](deploy.sh) (Bash)
-- **Windows 11 natively, with no WSL2/Linux distribution**: [`deploy.ps1`](deploy.ps1) (PowerShell)
-
-Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy.
-
-### Linux and WSL2: `deploy.sh`
-
-Run this from a regular (non-root) Bash shell -- it escalates internally with `sudo` only for the specific steps that need root (`apt`, installing/starting Docker, `chown`):
+See [Verifying Your Installation](docs/verify.md) for a full checklist. The short version:
 
 ```bash
-S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
+docker compose ps               # all three services should be "running"/"healthy"
+curl -fsS http://localhost:8082/healthz   # expect: ok
 ```
 
-This installs the AWS CLI, Docker Engine + the Compose plugin, and Git/Git LFS if they're missing; downloads both MBTiles files into `tileserver/data/`; fixes `mapproxy`/`nginx` runtime directory permissions; and runs `docker compose up -d`.
+Open `http://localhost:8082/tileservergl/` in a browser to see the TileserverGL style previews.
 
-Useful variations:
+## Stopping and Restarting
 
 ```bash
-./deploy.sh --init                # just install prerequisites
-./deploy.sh --download --perm     # just refresh data + permissions
-./deploy.sh --deploy               # just (re)start the stack
-./deploy.sh --force                # full run, force re-download
-./deploy.sh --no-nginx             # full run, skip the local nginx
-./deploy.sh --help                 # full flag/environment-variable reference
+docker compose down --remove-orphans   # stop
+docker compose up -d                   # start again
 ```
 
-### Windows 11 native PowerShell: `deploy.ps1`
+## Connecting GIS Clients
 
-This is for a **pure Windows 11 install with no WSL2 Linux distribution** -- it uses the [Chocolatey](https://chocolatey.org/) package manager to install AWS CLI v2, Git + Git LFS, and Docker Desktop (WSL2 engine), enabling only the underlying WSL2 platform that Docker Desktop's own internal VM needs (no Ubuntu or other distro). If you'd rather deploy inside a WSL2 Ubuntu distribution, use `deploy.sh` above -- see the [WSL2 setup option](#option-b-wsl2).
+RBT works with QGIS, ArcGIS Pro, and other WMS/WMTS-capable GIS software. See [Connecting GIS Clients to RBT](docs/gis-clients.md) for connection URLs and step-by-step walkthroughs with screenshots.
 
-Open **PowerShell as Administrator** (right-click Start menu -> "Terminal (Admin)"), `cd` into your clone of this repository, and run:
+## Troubleshooting
 
-```powershell
-$env:S3_BUCKET_RBT = 'my-bucket'
-$env:S3_BUCKET_TERRAIN = 'my-other-bucket'
-.\deploy.ps1
-```
+Something not working? See [Troubleshooting](docs/troubleshooting.md) for common issues and their solutions, or contact the RBT program manager for support.
 
-If PowerShell blocks the script with an execution-policy error, either run it through `powershell -ExecutionPolicy Bypass -File .\deploy.ps1` or, in that same Administrator session, run `Set-ExecutionPolicy -Scope Process Bypass` first.
+## Further Reading
 
-Only the `-Init` step (installing software, enabling the WSL2 platform) needs elevation; `-Download`, `-Prep`, and `-Deploy` do not. Enabling the WSL2 platform or installing Docker Desktop may ask you to reboot -- if so, restart Windows and re-run the same command; already-installed prerequisites are detected and skipped.
-
-Useful variations:
-
-```powershell
-.\deploy.ps1 -Init                  # just install prerequisites
-.\deploy.ps1 -Download -Prep        # just refresh data + runtime dirs
-.\deploy.ps1 -Deploy                 # just (re)start the stack
-.\deploy.ps1 -Force                  # full run, force re-download
-.\deploy.ps1 -NoNginx                # full run, skip the local nginx
-.\deploy.ps1 -Help                   # full flag/environment-variable reference
-```
-
-
-
-## Linux Setup
-
-Run the block below that matches your distribution family to install the required software, then run the shared steps that follow on any distribution.
-
-#### **Fedora/RHEL/CentOS:**
-
-```bash
-# Download and install AWS CLI
-sudo dnf install unzip -y;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    sudo ./aws/install
-
-# Remove old Docker versions (if any exist)
-sudo dnf remove docker docker-client \
-    docker-client-latest docker-common \
-    docker-latest docker-latest-logrotate \
-    docker-logrotate docker-selinux \
-    docker-engine-selinux docker-engine
-
-# Install Docker repository management tools
-sudo dnf -y install dnf-plugins-core
-
-# Add Docker's official repository
-sudo dnf config-manager \
-    --add-repo \
-    https://download.docker.com/linux/fedora/docker-ce.repo
-
-# Install Docker, Git, and Git LFS
-sudo dnf install docker-ce docker-ce-cli \
-    containerd.io docker-buildx-plugin \
-    docker-compose-plugin git-all git-lfs
-```
-
-
-
-#### **Ubuntu/Debian:**
-
-```bash
-# Download and install AWS CLI
-sudo apt-get update;
-sudo apt-get install -y unzip ca-certificates curl gnupg lsb-release;
-sudo update-ca-certificates;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    sudo ./aws/install;
-
-# Remove old Docker versions (if any exist)
-sudo apt-get remove docker docker-engine docker.io containerd runc;
-
-# Add Docker's official repository
-sudo mkdir -m 0755 -p /etc/apt/keyrings;
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg;
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null;
-sudo chmod a+r /etc/apt/keyrings/docker.gpg;
-
-# Install Docker, Git, and Git LFS
-sudo apt-get update;
-sudo apt-get install -y \
-    docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin \
-    git-all git-lfs;
-```
-
-
-
-#### **Shared steps (all distributions):**
-
-```bash
-# Enable Git LFS support
-git lfs install
-
-# Clone the RBT project
-git clone https://github.com/mjj203/agc-rbt.git && \
-    cd agc-rbt
-
-# The mapproxy container writes to these directories as uid/gid 1000 --
-# the uid baked into the upstream MapProxy image, and also the default
-# uid of the first non-root user on most Linux distributions. Check
-# your own user's ids with `id -u` and `id -g` if you suspect they
-# differ, and substitute below.
-sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
-
-# Download the map data (see Phase 3 above) before continuing, then
-# start the RBT stack from the agc-rbt directory
-docker compose up -d
-
-# Check logs
-docker compose logs -f
-
-# Stop the instance
-docker compose down --remove-orphans
-```
-
-
-
-## Windows 11 Setup
-
-RBT supports two ways to run on Windows 11:
-
-- **Option A: Native Windows 11** -- installs everything directly on Windows via Chocolatey and Docker Desktop, with no WSL2 Linux distribution involved.
-- **Option B: WSL2** -- runs RBT inside a WSL2 Ubuntu distribution, the same way as the Linux instructions above.
-
-Both are fully supported; pick whichever fits how you already work on this machine. Each option below also has a one-command automated equivalent -- see [Automated Deployment](#automated-deployment) above.
-
-### Option A: Native Windows 11 (PowerShell + Chocolatey)
-
-This path installs everything directly on Windows using the [Chocolatey](https://chocolatey.org/) package manager and Docker Desktop -- no WSL2 Linux distribution is installed or used. Docker Desktop still relies on the WSL2 *platform* under the hood for its own internal Linux VM (that's normal, and required, even in this "native" path) -- but you never install or interact with a Linux distribution yourself, and every command below runs in PowerShell. This is the manual equivalent of running [`deploy.ps1`](deploy.ps1).
-
-#### Step 1: Install Chocolatey, prerequisites, and Docker Desktop
-
-Open **PowerShell as Administrator** (right-click Start menu -> "Terminal (Admin)" or "Windows PowerShell (Admin)"), then run:
-
-```powershell
-# Install Chocolatey (skip this if `choco --version` already works)
-Set-ExecutionPolicy Bypass -Scope Process -Force
-[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-
-# Install AWS CLI v2, and Git + Git LFS (NoAutoCrlf keeps checkouts
-# respecting this repo's .gitattributes -- see "A note on Git line
-# endings" below)
-choco install awscli -y
-choco install git -y --params "'/NoAutoCrlf'"
-
-# Enable the WSL2 platform with no Linux distribution -- Docker Desktop's
-# own internal VM is all that needs it
-wsl --install --no-distribution
-
-# Install Docker Desktop (WSL2 engine, the package's default)
-choco install docker-desktop -y
-```
-
-Restart Windows if either the `wsl --install` or Docker Desktop step asks you to, then continue below. After installing, either open a new PowerShell window (so it picks up the updated `PATH`) or run `refreshenv`.
-
-#### Step 2: Start Docker Desktop and confirm it's running
-
-Launch **Docker Desktop** from the Start menu and wait for it to report "Engine running", then confirm from PowerShell:
-
-```powershell
-docker --version
-docker compose version
-```
-
-Docker Desktop's installer adds you to the local `docker-users` group automatically; log out and back in if `docker` commands fail with a permissions error immediately after install.
-
-#### Step 3: Clone the repository
-
-```powershell
-git lfs install
-git clone https://github.com/mjj203/agc-rbt.git
-cd agc-rbt
-```
-
-Clone to a path on your `C:` drive (e.g. `C:\Users\<you>\agc-rbt`) rather than a network share or removable drive -- Docker Desktop's file sharing performs best on a local NTFS volume.
-
-#### Step 4: Prepare runtime directories and start RBT
-
-Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs. You do still need the runtime directories to exist, and this repo's config files need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
-
-```powershell
-# Download the map data (see Phase 3 above) before continuing, then
-# start the RBT stack from the agc-rbt directory
-docker compose up -d
-
-# Check logs
-docker compose logs -f
-
-# Stop the instance
-docker compose down --remove-orphans
-```
-
-### Option B: WSL2
-
-RBT runs inside a Linux environment on Windows using **WSL2** (Windows Subsystem for Linux). Whether you choose Docker Desktop or Docker Engine below, every command in the rest of this option runs **inside your WSL2 Linux distribution**, not in PowerShell or `cmd.exe`.
-
-### Step 1: Enable WSL2
-
-1. Open PowerShell as Administrator (right-click Start menu -> "Terminal (Admin)" or "Windows PowerShell (Admin)")
-2. Run: `wsl --install`
-3. Restart your computer when prompted
-4. After restart, WSL finishes installing Ubuntu and prompts you to create a Linux username and password
-
-If `wsl --install` isn't available on your system, follow Microsoft's [manual installation steps](https://learn.microsoft.com/en-us/windows/wsl/install-manual) instead. See the [WSL environment setup guide](https://learn.microsoft.com/en-us/windows/wsl/setup/environment#set-up-your-linux-username-and-password) for more on the username/password step.
-
-### Step 2: Give WSL2 enough memory
-
-WSL2 defaults to using **half of your host's RAM** (and 25% of its swap), shared across every distro you run. This stack alone recommends 16GB, so that default is too small on most laptops. Create (or edit) `%UserProfile%\.wslconfig` **in Windows** (i.e. `C:\Users\<you>\.wslconfig` -- not a path inside WSL) with at least:
-
-```ini
-[wsl2]
-memory=16GB
-swap=4GB
-```
-
-Then apply the change from PowerShell:
-
-```powershell
-wsl --shutdown
-```
-
-The new limits take effect the next time you open a WSL2 terminal. See Microsoft's [.wslconfig reference](https://learn.microsoft.com/en-us/windows/wsl/wsl-config) for the full set of options.
-
-### Step 3: Choose Your Docker Setup
-
-**Option A: Docker Engine inside WSL2 (Recommended)** - lighter weight, no separate GUI application. See [Docker Engine in WSL2](#docker-engine-in-wsl2) below.
-
-**Option B: Docker Desktop with WSL2 backend** - adds a GUI and system tray app on top of the same WSL2 engine. See [Docker Desktop with WSL2](#docker-desktop-with-wsl2) below.
-
-Both run the same Linux containers the same way; pick based on whether you want the GUI.
-
-#### Docker Engine in WSL2
-
-Open your WSL2 distribution (search "Ubuntu" in the Start menu) and run:
-
-```bash
-# Download and install AWS CLI
-sudo apt-get update;
-sudo apt-get install -y unzip ca-certificates curl gnupg lsb-release;
-sudo update-ca-certificates;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    sudo ./aws/install;
-
-# Remove old Docker versions (if any exist)
-sudo apt-get remove docker docker-engine docker.io containerd runc;
-
-# Add Docker's official repository
-sudo mkdir -m 0755 -p /etc/apt/keyrings;
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg;
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null;
-sudo chmod a+r /etc/apt/keyrings/docker.gpg;
-
-# Install Docker, Git, and Git LFS
-sudo apt-get update;
-sudo apt-get install -y \
-    docker-ce docker-ce-cli containerd.io \
-    docker-buildx-plugin docker-compose-plugin \
-    git-all git-lfs;
-
-# Start the Docker service
-sudo service docker start
-```
-
-WSL2 doesn't run background services automatically on every launch by default, so you may need to run `sudo service docker start` each time you open a new WSL2 session -- or enable [systemd support](https://learn.microsoft.com/en-us/windows/wsl/systemd) in `/etc/wsl.conf` to avoid that.
-
-#### Docker Desktop with WSL2
-
-1. Follow Docker's [Windows install instructions](https://docs.docker.com/desktop/install/windows-install/) and download the [installer](https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe).
-2. Start Docker Desktop, open **Settings -> General**, and confirm **Use the WSL 2 based engine** is checked.
-
-![settings general](images/settings_general.png)
-
-Do **not** enable "Expose daemon on tcp://localhost:2375" -- that opens the Docker Engine API on your machine with no authentication. WSL integration (next step) already gives your Linux distro access to Docker without it.
-
-1. Open **Settings -> Resources -> WSL Integration**, enable **Enable integration with my default WSL distro**, and turn on any additional distros you use.
-
-![wsl integration](images/wsl_integration.png)
-
-1. From your WSL2 distribution, confirm Docker is reachable: `docker --version`
-2. Install Git and Git LFS if you haven't already:
-
-```bash
-sudo apt-get install -y git-all git-lfs
-git lfs install
-```
-
-
-
-### Step 4: Clone into the WSL2 filesystem (not `/mnt/c/...`)
-
-Clone this repository into your **WSL2 Linux filesystem** -- your home directory (`~`), not a path under `/mnt/c/`. Windows drives are mounted into WSL2 through a 9P-based filesystem that is dramatically slower for the many small files this stack reads (fonts, styles, tile caches), and permission changes (`chmod`/`chown`) are silently ignored there.
-
-```bash
-cd ~
-git clone https://github.com/mjj203/agc-rbt.git
-cd agc-rbt
-```
-
-
-
-### Step 5: Set permissions and start RBT
-
-```bash
-# The mapproxy container writes to these directories as uid/gid 1000,
-# which is also the default uid/gid of the first user WSL creates for you.
-sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
-
-# Download the map data (see Phase 3 above) before continuing, then
-# start the RBT stack from the agc-rbt directory
-docker compose up -d
-
-# Check logs
-docker compose logs -f
-
-# Stop the instance
-docker compose down --remove-orphans
-```
-
-
-
-### A note on disk space
-
-Everything in your WSL2 distribution -- including this repository and every MBTiles/GeoPackage file the stack downloads or creates -- lives inside a single virtual disk file (`ext4.vhdx`) that grows as needed but **does not shrink automatically** when you delete files. Make sure the Windows drive hosting your WSL2 distro has enough free space up front, per the disk space guidance above.
-
-If you need to reclaim space later, see Microsoft's [WSL disk space guide](https://learn.microsoft.com/en-us/windows/wsl/disk-space), which covers compacting the `.vhdx` file, `wsl --manage <distro> --resize`, and moving a distro to a different drive.
-
-### A note on the Windows Firewall
-
-The first time you run `docker compose up -d`, Windows Defender Firewall may prompt you to allow network access, because this stack's ports are published on `0.0.0.0` (every network interface) by default. Choose **Allow** if you want other devices on your network to reach RBT. If you only need RBT on this machine, copy `.env.example` to `.env` and set `BIND_ADDR=127.0.0.1` to avoid the prompt entirely.
-
-### A note on Git line endings
-
-Windows' Git defaults to converting line endings on checkout (`core.autocrlf=true`). This repository's [`.gitattributes`](.gitattributes) forces the config files this stack depends on (`nginx.conf`, `uwsgi.ini`, `mapproxy.yaml`, and similar) to always check out with Unix (`LF`) line endings, since a `uwsgi.ini` saved with Windows (`CRLF`) line endings prevents uWSGI from starting. If you cloned this repository before `.gitattributes` was added, either run `git config --global core.autocrlf input` and re-clone, or -- on native Windows (Option A) -- run `.\deploy.ps1 -Prep` to normalize the existing checkout in place without re-cloning.
-
-## Common Issues and Solutions
-
-
-
-### "Command not found" Error
-
-This usually means the software isn't installed or isn't in your system's PATH.
-
-- **Solution**: Try reinstalling the software or restart your terminal
-
-
-
-### "Permission denied" Error
-
-This means you need administrator privileges.
-
-- **Solution**: Add `sudo` before the command (on Linux, or inside WSL2 on Windows), or on native Windows re-open PowerShell as Administrator (right-click Start menu -> "Terminal (Admin)")
-
-
-
-### Docker Won't Start
-
-- **Windows (native or WSL2)**: Make sure Docker Desktop is running (check the system tray) and has finished starting -- it can take a minute after launch. If you're using Docker Engine directly inside WSL2 instead of Docker Desktop, run `sudo service docker start`.
-- **Linux**: Try `sudo systemctl start docker`
-
-
-
-### `choco` Not Recognized, or the Script Is Blocked by Execution Policy (Native Windows)
-
-- **`choco` / `aws` / `docker` not recognized right after installing them**: Open a new PowerShell window so it picks up the updated `PATH`, or run `refreshenv` in the current one.
-- **"running scripts is disabled on this system"**: PowerShell's default execution policy blocks unsigned local scripts. Either run `powershell -ExecutionPolicy Bypass -File .\deploy.ps1`, or run `Set-ExecutionPolicy -Scope Process Bypass` once in that PowerShell session before calling `.\deploy.ps1` directly.
-- **`choco install ...` itself fails with an access-denied error**: Confirm you opened PowerShell as Administrator -- installing packages system-wide requires it.
-
-
-
-### "Cannot connect to AWS" Error
-
-- **Solution**: Make sure you've configured AWS CLI with `aws configure --profile rbt`
-
-
-
-### Every `/mapproxy/*` Request Returns a 502 Bad Gateway
-
-This means the `mapproxy` container isn't listening where nginx expects it (`mapproxy:5000`).
-
-- **Solution**: Run `docker compose logs mapproxy` and confirm uWSGI started and bound its socket. If you've modified `mapproxy/config/uwsgi.ini` or the `mapproxy` service in `docker-compose.yaml`, compare against this repository's defaults -- the image needs an explicit `uwsgi --ini /mapproxy/config/uwsgi.ini` command; its own default command starts a development-only server that doesn't match what nginx expects.
-
-
-
-### TileserverGL Shows No Styles, or Styles Render Blank
-
-- **Solution**: Confirm `tileserver/data/TERRAIN.mbtiles` and `tileserver/data/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/`). A partial download loads without error but renders blank or incomplete tiles.
-
-
-
-### `mapproxy` Container Exits, or Can't Write Its Cache
-
-On **Linux or WSL2**, this is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
-
-- **Solution (Linux/WSL2)**: Re-run the `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks` step from the setup instructions above, then `docker compose restart mapproxy`.
-- **Solution (native Windows)**: There's no uid/gid mismatch to fix here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories regardless of Windows ACLs. Instead, run `docker compose logs mapproxy` and check Docker Desktop's **Settings -> Resources -> File sharing** includes the drive you cloned this repository onto.
-
-
-
-### Windows (WSL2): Containers Are Extremely Slow, or Permission Changes Don't Stick
-
-- **Solution**: Confirm the repository is cloned inside your WSL2 filesystem (`~/agc-rbt`), not under `/mnt/c/...`. See "Clone into the WSL2 filesystem" in the Windows setup above. (This doesn't apply to Option A/native Windows, which has no WSL2 filesystem boundary to cross.)
-
-
-
-### Windows: Docker Desktop or Its WSL2 Engine Runs Out of Memory
-
-Docker Desktop uses the WSL2 platform's shared utility VM for its engine on Windows, whether you're on Option A (native) or Option B (WSL2) -- so this applies to both.
-
-- **Solution**: Increase the `memory` value in `%UserProfile%\.wslconfig` (see "Give WSL2 enough memory" in the Windows setup above), then run `wsl --shutdown` and reopen Docker Desktop/your terminal.
-
-
-
-### uWSGI Fails to Start, or Config Changes Have No Effect
-
-- **Solution (Linux/WSL2)**: Check for Windows-style line endings: run `file mapproxy/config/uwsgi.ini` and look for `CRLF`. If present, see "A note on Git line endings" in the Windows setup above.
-- **Solution (native Windows)**: Run `Get-Content mapproxy/config/uwsgi.ini -Raw` in PowerShell and check whether it contains `` `r`n `` (CRLF) instead of plain `` `n `` -- or simply re-run `.\deploy.ps1 -Prep`, which normalizes this file (and the other config files) to LF automatically.
-
-
-
-### Native Windows: Reboot Requested, or `docker` Fails with a Permissions Error Right After Install
-
-- **A reboot prompt appeared during `-Init` / `choco install docker-desktop` / `wsl --install`**: This is expected the first time either the WSL2 platform or Docker Desktop is installed. Restart Windows, then re-run the same `deploy.ps1` command (or the manual step you were on) -- already-installed prerequisites are detected and skipped.
-- **`docker` commands fail with a permissions/access-denied error immediately after installing Docker Desktop**: You were added to the local `docker-users` group as part of the install, but Windows only applies new group membership to new sign-ins. Log out and back in (or reboot), then try again.
-
-
-
-## After Installation
-
-
-
-### How to Know It's Working
-
-Run these checks from the machine running Docker -- inside WSL2 on Windows Option B, or directly in PowerShell on native Windows Option A. Each command's expected result is listed underneath it. The `bash` examples below work as-is in WSL2/Linux; on native Windows PowerShell, run the same `docker compose`/`curl.exe` commands (PowerShell 5.1 aliases bare `curl` to `Invoke-WebRequest`, which takes different flags, so use `curl.exe` explicitly there).
-
-```bash
-docker compose ps
-```
-
-Expect: all three services (`mapproxy`, `nginx`, `tileservergl`) `running`, moving to `healthy` once their healthchecks pass. TileserverGL can take a few minutes to report healthy while it opens the MBTiles files -- this is normal.
-
-```bash
-curl -fsS http://localhost:8082/healthz
-```
-
-Expect: `ok`
-
-```bash
-curl -fsS http://localhost:8082/tileservergl/styles.json
-```
-
-Expect: a JSON array listing `RBT-TOPO`, `RBT-LIGHT`, `RBT-BROWN`, `RBT-GRAY`, `RBT-DARK`, and `RBT-OVERLAY`.
-
-```bash
-curl -fsS "http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml" | head -20
-```
-
-On native Windows PowerShell, the equivalent is:
-
-```powershell
-(curl.exe -fsS "http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml") -split "`n" | Select-Object -First 20
-```
-
-Expect: an XML document starting with `<Capabilities` that lists layers such as `rbt_topo_3857`, `rbt_dark_3857`, and `rbt_overlay_3857`.
-
-```bash
-curl -sD - -o /dev/null "http://localhost:8082/mapproxy/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=rbt_topo_3857&STYLES=&SRS=EPSG:3857&BBOX=-20037508.34,-20037508.34,20037508.34,20037508.34&WIDTH=256&HEIGHT=256&FORMAT=image/png"
-```
-
-Expect: `HTTP/1.1 200 OK` with an `X-Cache-Status: MISS` header on this first request, since MapProxy has to fetch from TileserverGL and cache the result. Run the exact same command again -- the second response should show `X-Cache-Status: HIT`, confirming nginx served it from cache without asking MapProxy again. (Use `curl -sD -` rather than `curl -sI` here -- a HEAD request is a different request method and some WMS servers, MapProxy included, respond to it with an error rather than an actual capabilities-appropriate response.)
-
-If you'd rather check by eye: open `http://localhost:8082/tileservergl/` in a browser to see the TileserverGL style previews. Direct (bypassing nginx entirely) access is also available on each service's own port:
-
-- TileserverGL: `http://localhost:8080`
-- MapProxy: `http://localhost:8081/wmts/1.0.0/WMTSCapabilities.xml`
-
-
-
-## Connecting GIS Clients to RBT
-
-RBT provides multiple ways for GIS clients (like QGIS, ArcGIS, or Global Mapper) to connect and access map data. With the unified nginx routing, all services are now accessible through port 8082.
-
-### Available Service Endpoints
-
-RBT exposes the following endpoints for GIS client connections through a unified nginx proxy on port 8082:
-
-#### 1. **MapProxy Services** - Best for Standard GIS Clients
-
-- **WMS**: `http://localhost:8082/mapproxy/wms`
-- **WMTS**: `http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml`
-- These provide cached raster tiles in standard OGC formats
-- Compatible with virtually all GIS software
-
-
-
-#### 2. **TileserverGL Services** - For Modern GIS Clients
-
-- **Web Interface**: `http://localhost:8082/tileservergl/`
-- **WMTS per style**: `http://localhost:8082/tileservergl/styles/{style-id}/wmts.xml`
-- **TileJSON**: `http://localhost:8082/tileservergl/styles/{style-id}.json`
-- **Vector Tiles**: `http://localhost:8082/tileservergl/data/{data-id}/{z}/{x}/{y}.pbf`
-- **Raster Tiles**: `http://localhost:8082/tileservergl/styles/{style-id}/{z}/{x}/{y}.png`
-
-
-
-#### 3. **Direct Access (Optional)**
-
-MapProxy and TileserverGL each also publish their own port directly, bypassing nginx entirely (no `/mapproxy` or `/tileservergl` prefix, no nginx caching -- just the backend's native paths):
-
-- **TileserverGL**: `http://localhost:8080` (port 8080)
-- **MapProxy**: `http://localhost:8081/wms` or `http://localhost:8081/wmts/1.0.0/WMTSCapabilities.xml` (port 8081)
-
-This is also what powers the nginx-free deployment described in [Deploying Without nginx (AWS ALB / CloudFront)](#deploying-without-nginx-aws-alb--cloudfront) below.
-
-
-
-### Connecting GIS Clients to RBT
-
-For detailed step-by-step instructions with screenshots on connecting QGIS and ArcGIS Pro to RBT services, see our [WMTS Connection Guide](docs/WMTS.md).
-
-#### Quick Connection URLs:
-
-**MapProxy (Recommended for Performance):**
-
-- WMS: `http://localhost:8082/mapproxy/wms`
-- WMTS: `http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml`
-
-**TileserverGL (For Style Options):**
-
-- Web Interface: `http://localhost:8082/tileservergl/`
-- WMTS per style: `http://localhost:8082/tileservergl/styles/{style-id}/wmts.xml`
-- Vector Tiles: `http://localhost:8082/tileservergl/data/{data-id}/{z}/{x}/{y}.pbf`
-
-
-
-### Advanced TileserverGL Endpoints
-
-Based on the [TileserverGL documentation](https://tileserver.readthedocs.io/en/latest/endpoints.html), you can also access through the unified nginx proxy:
-
-- **List all styles**: `http://localhost:8082/tileservergl/styles.json`
-- **Style details**: `http://localhost:8082/tileservergl/styles/{style-id}/style.json`
-- **Available fonts**: `http://localhost:8082/tileservergl/fonts.json`
-- **Static images**: `http://localhost:8082/tileservergl/styles/{style-id}/static/{lon},{lat},{zoom}/{width}x{height}.png`
-- **Data inspection**: `http://localhost:8082/tileservergl/data/{data-id}/{z}/{x}/{y}.geojson`
-
-
-
-### Choosing the Right Endpoint
-
-- **Use MapProxy endpoints** (`/mapproxy/`*) when:
-  - You need maximum compatibility with older GIS software
-  - You want cached tiles for better performance
-  - You're using standard OGC protocols (WMS/WMTS)
-- **Use TileserverGL endpoints** (`/tileservergl/`*) when:
-  - You want vector tiles for dynamic styling
-  - You need the latest style directly from the source
-  - You're using modern GIS clients that support vector tiles
-
-**Benefits of Unified Nginx Routing (Port 8082):**
-
-- Single port for all services simplifies firewall rules
-- Consistent URL structure for all endpoints
-- Nginx provides additional caching and performance optimization
-- Easier to implement SSL/TLS for all services
-- Simplified proxy configuration for enterprise environments
-
-
-
-### Deploying Without nginx (AWS ALB / CloudFront)
-
-Everything above assumes the local nginx service is fronting MapProxy and TileserverGL. If you're deploying to AWS and would rather let an Application Load Balancer and/or CloudFront handle TLS termination, routing, and caching, you can skip nginx entirely -- MapProxy speaks plain HTTP (via uWSGI's built-in HTTP router) exactly like TileserverGL already does, so both are directly reachable by an ALB target group or CloudFront origin.
-
-**To deploy without nginx:**
-
-```bash
-docker compose -f docker-compose.yaml up -d
-# or, using deploy.sh:
-./deploy.sh --no-nginx
-# or, on native Windows, using deploy.ps1:
-.\deploy.ps1 -NoNginx
-```
-
-nginx normally comes from `docker-compose.override.yaml`, which Docker Compose merges in automatically whenever you run `docker compose ...` with no explicit `-f` flags -- that's why the plain `docker compose up -d` used everywhere else in this guide still includes it. Naming `-f docker-compose.yaml` explicitly (as above) opts out of that auto-merge.
-
-**What changes:**
-
-- MapProxy and TileserverGL each publish their own port directly (`MAPPROXY_PORT`, default `8081`; `TILESERVER_PORT`, default `8080` -- see `.env.example`), reached at their native paths with no `/mapproxy` or `/tileservergl` prefix (the same paths documented under [Direct Access](#3-direct-access-optional) above).
-- Neither ALB nor CloudFront rewrite request paths by default, so route by each backend's own path patterns instead of trying to recreate nginx's prefix scheme:
-  - MapProxy target/origin: `/wms*`, `/wmts/*`, `/service*`, `/demo/*`
-  - TileserverGL target/origin: `/styles/*`, `/data/*`, `/fonts.json`, `/styles.json`, `/`
-- You lose nginx's local HTTP response cache and gzip compression -- CloudFront's edge caching and compression are the intended replacement. MapProxy's own GeoPackage tile cache (`mapproxy/data`) is unaffected either way; it caches upstream TileserverGL tiles regardless of what's in front of MapProxy.
-- If a client needs the exact `example.org/mapproxy/...` / `example.org/tileservergl/...` URLs nginx currently produces, that rewrite has to happen at the ALB/CloudFront layer (e.g. a CloudFront Function) -- it isn't something this repo can do once nginx is out of the path.
-
-
-
-### Troubleshooting GIS Client Connections
-
-1. **Connection Failed**: Ensure Docker containers are running (`docker ps`)
-2. **No Layers Visible**: Check that you've downloaded the map data (Phase 3)
-3. **Slow Performance**: Use MapProxy endpoints for cached tiles
-4. **Style Issues**: Vector tiles require GIS client support for MapLibre styles
-
-
-
-### How to Stop the Application
-
-Run: `docker compose down --remove-orphans`
-
-### How to Start It Again
-
-Run: `docker compose up -d`
-
-### Where to Get Help
-
-- Check the Troubleshooting section above
-- Contact the RBT program manager for support
-
-
+- [Architecture](docs/architecture.md) -- what RBT is, why it uses vector tiles, and the technical design
+- [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), [Installing on Windows 11](docs/install-windows.md) -- manual, step-by-step setup per OS
+- [Verifying Your Installation](docs/verify.md)
+- [Connecting GIS Clients to RBT](docs/gis-clients.md)
+- [Advanced: Deploying Without nginx](docs/advanced-deployment.md) -- for AWS ALB/CloudFront deployments
+- [Troubleshooting](docs/troubleshooting.md)
 
 ## Glossary of Terms
 
@@ -830,4 +97,3 @@ Run: `docker compose up -d`
 - **Container**: A packaged application with all its dependencies
 - **Repository/Repo**: A project's code and files stored online
 - **Terminal**: The application where you type commands
-
