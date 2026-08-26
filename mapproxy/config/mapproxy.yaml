@@ -5,6 +5,12 @@ services:
     md:
       title: RBT WMTS
   wms:
+    # Without EPSG:3395 here, WMS GetMap rejects the world_mercator layers
+    # with InvalidSRS even though WMTS serves them fine. Setting `srs`
+    # *replaces* MapProxy's default list rather than adding to it, so the
+    # five defaults are repeated alongside it. EPSG:3395 is easting/northing
+    # like EPSG:3857, so it needs no globals.srs.axis_order_* entry.
+    srs: ["CRS:84", "EPSG:4326", "EPSG:4258", "EPSG:3857", "EPSG:900913", "EPSG:3395"]
     md:
       title: RBT WMS
 
@@ -12,6 +18,15 @@ layers:
   - name: rbt_topo_3857
     title: rbt_topo_3857
     sources: [rbt_topo_3857_cache]
+  - name: rbt_light_3857
+    title: rbt_light_3857
+    sources: [rbt_light_3857_cache]
+  - name: rbt_brown_3857
+    title: rbt_brown_3857
+    sources: [rbt_brown_3857_cache]
+  - name: rbt_gray_3857
+    title: rbt_gray_3857
+    sources: [rbt_gray_3857_cache]
   - name: rbt_dark_3857
     title: rbt_dark_3857
     sources: [rbt_dark_3857_cache]
@@ -21,6 +36,15 @@ layers:
   - name: rbt_topo_3395
     title: rbt_topo_3395
     sources: [rbt_topo_3395_cache]
+  - name: rbt_light_3395
+    title: rbt_light_3395
+    sources: [rbt_light_3395_cache]
+  - name: rbt_brown_3395
+    title: rbt_brown_3395
+    sources: [rbt_brown_3395_cache]
+  - name: rbt_gray_3395
+    title: rbt_gray_3395
+    sources: [rbt_gray_3395_cache]
   - name: rbt_dark_3395
     title: rbt_dark_3395
     sources: [rbt_dark_3395_cache]
@@ -31,6 +55,27 @@ layers:
 caches:
   rbt_topo_3857_cache:
     sources: [rbt_topo_source]
+    format: mixed
+    request_format: image/png
+    minimize_meta_requests: true
+    grids: [webmercator]
+    disable_storage: true
+  rbt_light_3857_cache:
+    sources: [rbt_light_source]
+    format: mixed
+    request_format: image/png
+    minimize_meta_requests: true
+    grids: [webmercator]
+    disable_storage: true
+  rbt_brown_3857_cache:
+    sources: [rbt_brown_source]
+    format: mixed
+    request_format: image/png
+    minimize_meta_requests: true
+    grids: [webmercator]
+    disable_storage: true
+  rbt_gray_3857_cache:
+    sources: [rbt_gray_source]
     format: mixed
     request_format: image/png
     minimize_meta_requests: true
@@ -60,6 +105,27 @@ caches:
     minimize_meta_requests: true
     grids: [world_mercator]
     disable_storage: true
+  rbt_light_3395_cache:
+    sources: [rbt_light_3857_cache]
+    format: mixed
+    request_format: image/png
+    minimize_meta_requests: true
+    grids: [world_mercator]
+    disable_storage: true
+  rbt_brown_3395_cache:
+    sources: [rbt_brown_3857_cache]
+    format: mixed
+    request_format: image/png
+    minimize_meta_requests: true
+    grids: [world_mercator]
+    disable_storage: true
+  rbt_gray_3395_cache:
+    sources: [rbt_gray_3857_cache]
+    format: mixed
+    request_format: image/png
+    minimize_meta_requests: true
+    grids: [world_mercator]
+    disable_storage: true
   rbt_dark_3395_cache:
     sources: [rbt_dark_3857_cache]
     format: mixed
@@ -80,6 +146,24 @@ sources:
     type: tile
     # Local TileserverGL container, EPSG:3857 (Web Mercator)
     url: http://tileservergl:8080/styles/RBT-TOPO/512/%(z)s/%(x)s/%(y)s.png
+    grid: webmercator
+  # The three canvas styles (RBT-CANVAS-LIGHT/-BROWN/-GRAY in their
+  # style.json ids) are opaque basemaps like topo and dark, so they need no
+  # `transparent: true` -- only rbt_overlay_source below is drawn over imagery.
+  rbt_light_source:
+    type: tile
+    # Local TileserverGL container, EPSG:3857 (Web Mercator)
+    url: http://tileservergl:8080/styles/RBT-LIGHT/512/%(z)s/%(x)s/%(y)s.png
+    grid: webmercator
+  rbt_brown_source:
+    type: tile
+    # Local TileserverGL container, EPSG:3857 (Web Mercator)
+    url: http://tileservergl:8080/styles/RBT-BROWN/512/%(z)s/%(x)s/%(y)s.png
+    grid: webmercator
+  rbt_gray_source:
+    type: tile
+    # Local TileserverGL container, EPSG:3857 (Web Mercator)
+    url: http://tileservergl:8080/styles/RBT-GRAY/512/%(z)s/%(x)s/%(y)s.png
     grid: webmercator
   rbt_dark_source:
     type: tile

@@ -63,7 +63,7 @@ RBT uses several components working together:
 
 ## Technical Architecture
 
-RBT is deployed as a containerized application using [TileserverGL](https://github.com/maptiler/tileserver-gl), which uses [MapLibre GL Native](https://maplibre.org/) for server-side rendering and serves vector and raster tiles in **EPSG:3857** (Web Mercator). Additionally, [MapProxy](https://mapproxy.org/) is deployed in front of TileserverGL to cache those raster tiles, exposing them through standard OGC WMS/WMTS endpoints, also in **EPSG:3857**.
+RBT is deployed as a containerized application using [TileserverGL](https://github.com/maptiler/tileserver-gl), which uses [MapLibre GL Native](https://maplibre.org/) for server-side rendering and serves vector and raster tiles in **EPSG:3857** (Web Mercator). Additionally, [MapProxy](https://mapproxy.org/) is deployed in front of TileserverGL to cache those raster tiles, exposing them through standard OGC WMS/WMTS endpoints in **EPSG:3857** and, reprojected from that same cache, **EPSG:3395** (World Mercator). Its WMS also reprojects on the fly to EPSG:4326, EPSG:4258, CRS:84, and EPSG:900913.
 
 This guide documents a **Docker Compose** deployment suitable for a single host (a workstation, VM, or on-premises server) running macOS, Windows 11, or Linux. You will need S3 credentials from the RBT team to download the MBTiles data that TileserverGL serves.
 
