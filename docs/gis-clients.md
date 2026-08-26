@@ -170,6 +170,6 @@ Visit the TileserverGL interface to see all available styles and their previews.
 2. **No Layers Visible**: Check that you've downloaded the map data (see the main README's [Get S3 Credentials](../README.md#get-s3-credentials)) and check Docker logs: `docker compose logs`
 3. **Slow Performance**: Use MapProxy endpoints for cached tiles
 4. **Style Issues**: Vector tiles require GIS client support for MapLibre styles
-5. **Projection Issues**: Both TileserverGL and MapProxy serve EPSG:3857 (Web Mercator), the standard projection used by most web maps. Set your QGIS/ArcGIS project CRS to EPSG:3857 (or let the client reproject on the fly)
+5. **Projection Issues**: TileserverGL serves EPSG:3857 (Web Mercator), the standard projection used by most web maps. Set your QGIS/ArcGIS project CRS to EPSG:3857 (or let the client reproject on the fly). MapProxy serves EPSG:3857 as well, and additionally accepts EPSG:3395 (World Mercator) -- over WMS via `SRS`/`CRS=EPSG:3395`, and over WMTS through the `world_mercator` TileMatrixSet on the `_3395` layers
 
 See also the main [Troubleshooting](troubleshooting.md) guide for Docker- and deployment-level issues.

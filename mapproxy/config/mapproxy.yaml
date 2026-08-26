@@ -5,6 +5,12 @@ services:
     md:
       title: RBT WMTS
   wms:
+    # Without EPSG:3395 here, WMS GetMap rejects the world_mercator layers
+    # with InvalidSRS even though WMTS serves them fine. Setting `srs`
+    # *replaces* MapProxy's default list rather than adding to it, so the
+    # five defaults are repeated alongside it. EPSG:3395 is easting/northing
+    # like EPSG:3857, so it needs no globals.srs.axis_order_* entry.
+    srs: ["CRS:84", "EPSG:4326", "EPSG:4258", "EPSG:3857", "EPSG:900913", "EPSG:3395"]
     md:
       title: RBT WMS
 
