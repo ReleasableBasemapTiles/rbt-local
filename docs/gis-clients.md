@@ -162,24 +162,24 @@ Based on the [TileserverGL documentation](https://tileserver.readthedocs.io/en/l
 - **RBT-DARK**: Dark theme style
 - **RBT-OVERLAY**: Overlay style for use with imagery
 
-Visit the TileserverGL interface to see all available styles and their previews. Screenshots elsewhere in this guide may still show older `-3395` style identifiers (e.g. `RBT-TOPO-3395`); TileserverGL renders every style in EPSG:3857, so those styles were renamed to drop the `-3395` suffix. EPSG:3395 is still available -- MapProxy reprojects it, as described below.
+Visit the TileserverGL interface to see all available styles and their previews. Screenshots elsewhere in this guide may still show older `-3395` style identifiers (e.g. `RBT-TOPO-3395`); TileserverGL renders every style in EPSG:3857, so those styles were renamed to drop the `-3395` suffix. EPSG:3395 and EPSG:4326 are still available -- MapProxy reprojects both, as described below.
 
 ## Available Layers in MapProxy
 
-MapProxy exposes each style as a WMS/WMTS layer, twice: once in EPSG:3857 and once in EPSG:3395. Pick whichever matches your project CRS.
+MapProxy exposes each style as a WMS/WMTS layer, three times: once in EPSG:3857, once in EPSG:3395, and once in EPSG:4326. Pick whichever matches your project CRS.
 
-| Style | EPSG:3857 (Web Mercator) | EPSG:3395 (World Mercator) |
-| --- | --- | --- |
-| RBT-TOPO | `rbt_topo_3857` | `rbt_topo_3395` |
-| RBT-LIGHT | `rbt_light_3857` | `rbt_light_3395` |
-| RBT-BROWN | `rbt_brown_3857` | `rbt_brown_3395` |
-| RBT-GRAY | `rbt_gray_3857` | `rbt_gray_3395` |
-| RBT-DARK | `rbt_dark_3857` | `rbt_dark_3395` |
-| RBT-OVERLAY | `rbt_overlay_3857` | `rbt_overlay_3395` |
+| Style | EPSG:3857 (Web Mercator) | EPSG:3395 (World Mercator) | EPSG:4326 (WGS 84 / Geographic) |
+| --- | --- | --- | --- |
+| RBT-TOPO | `rbt_topo_3857` | `rbt_topo_3395` | `rbt_topo_4326` |
+| RBT-LIGHT | `rbt_light_3857` | `rbt_light_3395` | `rbt_light_4326` |
+| RBT-BROWN | `rbt_brown_3857` | `rbt_brown_3395` | `rbt_brown_4326` |
+| RBT-GRAY | `rbt_gray_3857` | `rbt_gray_3395` | `rbt_gray_4326` |
+| RBT-DARK | `rbt_dark_3857` | `rbt_dark_3395` | `rbt_dark_4326` |
+| RBT-OVERLAY | `rbt_overlay_3857` | `rbt_overlay_3395` | `rbt_overlay_4326` |
 
-Only the `_3857` layers read from TileserverGL directly. Each `_3395` layer reprojects from its `_3857` counterpart rather than asking TileserverGL to render the style a second time.
+Only the `_3857` layers read from TileserverGL directly. Each `_3395` and `_4326` layer reprojects from its `_3857` counterpart rather than asking TileserverGL to render the style a second (or third) time.
 
-Over WMTS, each layer is offered in one TileMatrixSet -- `webmercator` for the `_3857` layers, `world_mercator` for the `_3395` ones. Over WMS, any layer can be requested in any of the service's advertised SRS (`EPSG:3857`, `EPSG:3395`, `EPSG:4326`, `EPSG:4258`, `CRS:84`, `EPSG:900913`), with MapProxy reprojecting as needed.
+Over WMTS, each layer is offered in one TileMatrixSet -- `webmercator` for the `_3857` layers, `world_mercator` for the `_3395` ones, and `geodetic` for the `_4326` ones. Over WMS, any layer can be requested in any of the service's advertised SRS (`EPSG:3857`, `EPSG:3395`, `EPSG:4326`, `EPSG:4258`, `CRS:84`, `EPSG:900913`), with MapProxy reprojecting as needed.
 
 `RBT-OVERLAY` is the only transparent layer -- it is meant to be drawn on top of imagery. The other five are opaque basemaps.
 
@@ -189,6 +189,6 @@ Over WMTS, each layer is offered in one TileMatrixSet -- `webmercator` for the `
 2. **No Layers Visible**: Check that you've downloaded the map data (see the main README's [Get S3 Credentials](../README.md#get-s3-credentials)) and check Docker logs: `docker compose logs`
 3. **Slow Performance**: Use MapProxy endpoints for cached tiles
 4. **Style Issues**: Vector tiles require GIS client support for MapLibre styles
-5. **Projection Issues**: TileserverGL serves EPSG:3857 (Web Mercator) only, so set your QGIS/ArcGIS project CRS to EPSG:3857 when connecting to it (or let the client reproject on the fly). MapProxy is the one to use if you need another projection -- see [Available Layers in MapProxy](#available-layers-in-mapproxy) above for the EPSG:3395 layers and the full list of SRS its WMS accepts
+5. **Projection Issues**: TileserverGL serves EPSG:3857 (Web Mercator) only, so set your QGIS/ArcGIS project CRS to EPSG:3857 when connecting to it (or let the client reproject on the fly). MapProxy is the one to use if you need another projection -- see [Available Layers in MapProxy](#available-layers-in-mapproxy) above for the EPSG:3395 and EPSG:4326 layers and the full list of SRS its WMS accepts
 
 See also the main [Troubleshooting](troubleshooting.md) guide for Docker- and deployment-level issues.

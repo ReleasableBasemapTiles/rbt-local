@@ -30,7 +30,7 @@ On native Windows PowerShell, the equivalent is:
 (curl.exe -fsS "http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml") -split "`n" | Select-Object -First 20
 ```
 
-Expect: an XML document starting with `<Capabilities` that lists one layer per style and projection: `rbt_topo_3857`, `rbt_light_3857`, `rbt_brown_3857`, `rbt_gray_3857`, `rbt_dark_3857`, and `rbt_overlay_3857`, plus the matching `_3395` layers.
+Expect: an XML document starting with `<Capabilities` that lists one layer per style and projection: `rbt_topo_3857`, `rbt_light_3857`, `rbt_brown_3857`, `rbt_gray_3857`, `rbt_dark_3857`, and `rbt_overlay_3857`, plus the matching `_3395` and `_4326` layers.
 
 ```bash
 curl -sD - -o /dev/null "http://localhost:8082/mapproxy/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=rbt_topo_3857&STYLES=&SRS=EPSG:3857&BBOX=-20037508.34,-20037508.34,20037508.34,20037508.34&WIDTH=256&HEIGHT=256&FORMAT=image/png"
