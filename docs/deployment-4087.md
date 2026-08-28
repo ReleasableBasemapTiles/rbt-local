@@ -34,9 +34,8 @@ Set `S3_BUCKET_RBT_4087` and `S3_BUCKET_TERRAIN_4087` (alongside the existing `S
 **With Docker Compose directly** (assuming the EPSG:3857 MBTiles are already in `tileserver/data/3857/` and the EPSG:4087 MBTiles are already in `tileserver/data/4087/`):
 
 ```bash
-docker compose -f docker-compose.4087.yaml up -d                                  # with nginx
-docker compose -f docker-compose.4087.yaml -f docker-compose.override.yaml up -d  # same, explicit
-docker compose -f docker-compose.4087.yaml up -d --no-deps mapproxy tileservergl tileservergl4087  # without nginx
+docker compose -f docker-compose.4087.yaml -f docker-compose.override.yaml up -d  # with nginx
+docker compose -f docker-compose.4087.yaml up -d                                  # without nginx
 ```
 
 ## Verifying it's working

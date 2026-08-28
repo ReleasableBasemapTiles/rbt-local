@@ -69,6 +69,7 @@ Usage:
   ./deploy.sh --force               # full run, force re-download
   ./deploy.sh --no-nginx            # full run, skip the local nginx
   ./deploy.sh --4087                # full run, EPSG:4087 dual-tileserver stack
+  ./deploy.sh --4087 --no-nginx     # same, without the local nginx
 
 Run this as your normal (non-root) user, not via `sudo`. On Linux it
 escalates internally with sudo only for the specific steps that need root
@@ -655,7 +656,7 @@ if [[ "$RUN_DEPLOY" -eq 1 && "$WITH_NGINX" -eq 0 ]]; then
     echo "  Tiles (4087): curl -fsS http://localhost:\${TILESERVER_4087_PORT:-8083}/"
   fi
   echo "  Stop:      docker compose -f $base_file down --remove-orphans"
-elif [[ "$USE_4087" -eq 1 ]]; then
+elif [[ "$RUN_DEPLOY" -eq 1 && "$USE_4087" -eq 1 ]]; then
   # docker compose only auto-discovers docker-compose.yaml/.override.yaml,
   # not docker-compose.4087.yaml, so -f must stay explicit here.
   base_file="$(base_compose_file)"
@@ -663,7 +664,7 @@ elif [[ "$USE_4087" -eq 1 ]]; then
   echo "  Health: curl -fsS http://localhost:\${NGINX_PORT:-8082}/healthz"
   echo "  Tiles (4087): curl -fsS http://localhost:\${NGINX_PORT:-8082}/tileservergl4087/"
   echo "  Stop:   docker compose -f $base_file -f docker-compose.override.yaml down --remove-orphans"
-else
+elif [[ "$RUN_DEPLOY" -eq 1 ]]; then
   echo "  Logs:   docker compose logs -f"
   echo "  Health: curl -fsS http://localhost:\${NGINX_PORT:-8082}/healthz"
   echo "  Stop:   docker compose down --remove-orphans"
