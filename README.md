@@ -76,8 +76,6 @@ flowchart LR
   end
 
   client -->|"port 8082"| nginx
-  client -.->|"direct"| mapproxy
-  client -.->|"direct"| tileservergl
   nginx -->|"/mapproxy/* and /"| mapproxy
   nginx -->|"/tileservergl/*"| tileservergl
   mapproxy -->|"renders uncached tiles"| tileservergl
