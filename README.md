@@ -51,7 +51,7 @@ You'll use these credentials to download two files -- `RBT.mbtiles` and `TERRAIN
    .\deploy.ps1
    ```
 
-Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, or `--no-nginx`/`-NoNginx` to skip the local reverse proxy (see [Advanced: Deploying Without nginx](docs/advanced-deployment.md)).
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--no-nginx`/`-NoNginx` to skip the local reverse proxy (see [Advanced: Deploying Without nginx](docs/advanced-deployment.md)), or `--4087`/`-Use4087` to deploy a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output (see [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md)).
 
 Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
@@ -88,6 +88,7 @@ Something not working? See [Troubleshooting](docs/troubleshooting.md) for common
 - [Verifying Your Installation](docs/verify.md)
 - [Connecting GIS Clients to RBT](docs/gis-clients.md)
 - [Advanced: Deploying Without nginx](docs/advanced-deployment.md) -- for AWS ALB/CloudFront deployments
+- [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md) -- a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Glossary of Terms

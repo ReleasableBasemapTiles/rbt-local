@@ -65,6 +65,8 @@ RBT uses several components working together:
 
 RBT is deployed as a containerized application using [TileserverGL](https://github.com/maptiler/tileserver-gl), which uses [MapLibre GL Native](https://maplibre.org/) for server-side rendering and serves vector and raster tiles in **EPSG:3857** (Web Mercator). Additionally, [MapProxy](https://mapproxy.org/) is deployed in front of TileserverGL to cache those raster tiles, exposing them through standard OGC WMS/WMTS endpoints in **EPSG:3857** and, reprojected from that same cache, **EPSG:3395** (World Mercator) and **EPSG:4326** (WGS 84 / geographic). Its WMS also reprojects on the fly to EPSG:4258, CRS:84, and EPSG:900913.
 
+An alternative deployment ([docs/deployment-4087.md](deployment-4087.md)) adds a second TileserverGL container serving **EPSG:4087** (World Equidistant Cylindrical) MBTiles, and reprojects the EPSG:4326 cache from that EPSG:4087 cache instead of EPSG:3857 -- a pure unit-scale conversion rather than a resample away from EPSG:3857's angular distortion, so EPSG:4326 output is sharper away from the equator.
+
 This guide documents a **Docker Compose** deployment suitable for a single host (a workstation, VM, or on-premises server) running macOS, Windows 11, or Linux. You will need S3 credentials from the RBT team to download the MBTiles data that TileserverGL serves.
 
 ![RBT_ARCHITECTURE](../images/rbt_architecture.png)
@@ -74,4 +76,5 @@ This guide documents a **Docker Compose** deployment suitable for a single host 
 - **[deploy.sh](../deploy.sh)** / **[deploy.ps1](../deploy.ps1)**: automate the manual setup steps in [Installing on macOS](install-macos.md), [Installing on Linux](install-linux.md), and [Installing on Windows 11](install-windows.md).
 - **[docker-compose.yaml](../docker-compose.yaml)**: defines the `mapproxy` and `tileservergl` services.
 - **[docker-compose.override.yaml](../docker-compose.override.yaml)**: adds the optional local `nginx` reverse-proxy/cache in front of them; Compose merges this in automatically unless you opt out (see [Advanced: Deploying Without nginx](advanced-deployment.md)).
-- **[mapproxy/config/](../mapproxy/config/)**, **[nginx/config/](../nginx/config/)**, **[tileserver/config/](../tileserver/config/)**: the runtime configuration each service reads.
+- **[docker-compose.4087.yaml](../docker-compose.4087.yaml)**: alternative to `docker-compose.yaml` that adds a second TileserverGL container serving EPSG:4087 MBTiles (see [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](deployment-4087.md)).
+- **[mapproxy/config/](../mapproxy/config/)**, **[nginx/config/](../nginx/config/)**, **[tileserver/config/](../tileserver/config/)**: the runtime configuration each service reads. `mapproxy/config/mapproxy.4087.yaml` is the MapProxy config for the `docker-compose.4087.yaml` stack, a sibling of `mapproxy/config/mapproxy.yaml`.

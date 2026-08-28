@@ -18,6 +18,7 @@ param(
     [switch]$Deploy,
     [switch]$Force,
     [switch]$NoNginx,
+    [switch]$Use4087,
     [switch]$Help
 )
 
@@ -37,7 +38,7 @@ of the order given on the command line):
              Desktop's own internal VM is all that needs it), and Docker
              Desktop (WSL2 engine).
   -Download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
-             tileserver\data\.
+             tileserver\data\3857\.
   -Prep      Create the mapproxy/nginx/tileserver runtime directories and
              normalize their config files to LF line endings (uWSGI refuses
              to start if uwsgi.ini has Windows CRLF endings).
@@ -49,6 +50,14 @@ of the order given on the command line):
              AWS ALB and/or CloudFront) talks HTTP directly to mapproxy
              (port 8081 by default) and tileservergl (port 8080 by default)
              instead. Only relevant with -Deploy, or with no step switches.
+  -Use4087   Deploy docker-compose.4087.yaml instead of docker-compose.yaml
+             -- adds a second TileserverGL container (tileservergl4087)
+             serving EPSG:4087 MBTiles, and points mapproxy at
+             mapproxy.4087.yaml so its EPSG:4326 caches reproject from
+             EPSG:4087 instead of EPSG:3857 (see docs/deployment-4087.md).
+             Combines with -NoNginx and -Force. With -Download (or no step
+             switches), also downloads the EPSG:4087 RBT.mbtiles/
+             TERRAIN.mbtiles into tileserver\data\4087\.
 
 Usage:
   $env:S3_BUCKET_RBT = 'my-bucket'
@@ -59,6 +68,7 @@ Usage:
   .\deploy.ps1 -Deploy                # just (re)start the stack
   .\deploy.ps1 -Force                 # full run, force re-download
   .\deploy.ps1 -NoNginx               # full run, skip the local nginx
+  .\deploy.ps1 -Use4087               # full run, EPSG:4087 dual-tileserver stack
 
 Run this from an elevated (Administrator) PowerShell only when using -Init
 (or with no step switches, since -Init then runs too) -- installing software
@@ -76,6 +86,13 @@ in .env):
                       "my-bucket" or "s3://my-bucket/exports". Must contain
                       RBT.mbtiles.
   S3_BUCKET_TERRAIN  Same, but must contain TERRAIN.mbtiles.
+
+Additional environment variables (only enforced when the download step
+runs together with -Use4087):
+  S3_BUCKET_RBT_4087      Same as S3_BUCKET_RBT, but for the EPSG:4087
+                           RBT.mbtiles.
+  S3_BUCKET_TERRAIN_4087  Same as S3_BUCKET_TERRAIN, but for the EPSG:4087
+                           TERRAIN.mbtiles.
 
 Re-running this script is safe: package installs are skipped when already
 present. TERRAIN.mbtiles is only downloaded once (it never changes upstream).
@@ -478,16 +495,33 @@ function Get-MbtilesFile {
 }
 
 function Get-AllMbtiles {
-    New-Item -ItemType Directory -Force -Path $script:DataDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $script:DataDir3857 | Out-Null
 
-    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT' -Dest $script:RbtFile -CheckRemote $true
-    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN' -Dest $script:TerrainFile -CheckRemote $false
+    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT' -Dest $script:RbtFile3857 -CheckRemote $true
+    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN' -Dest $script:TerrainFile3857 -CheckRemote $false
 
-    if (-not ((Test-Path $script:RbtFile -PathType Leaf) -and (Get-Item $script:RbtFile).Length -gt 0)) {
-        Write-ErrorAndExit "$($script:RbtFile) is missing or empty after download"
+    if (-not ((Test-Path $script:RbtFile3857 -PathType Leaf) -and (Get-Item $script:RbtFile3857).Length -gt 0)) {
+        Write-ErrorAndExit "$($script:RbtFile3857) is missing or empty after download"
     }
-    if (-not ((Test-Path $script:TerrainFile -PathType Leaf) -and (Get-Item $script:TerrainFile).Length -gt 0)) {
-        Write-ErrorAndExit "$($script:TerrainFile) is missing or empty after download"
+    if (-not ((Test-Path $script:TerrainFile3857 -PathType Leaf) -and (Get-Item $script:TerrainFile3857).Length -gt 0)) {
+        Write-ErrorAndExit "$($script:TerrainFile3857) is missing or empty after download"
+    }
+
+    # The -Use4087 stack still runs the EPSG:3857 tileservergl container too
+    # (see docker-compose.4087.yaml), so the downloads above always run;
+    # this just adds the second container's EPSG:4087 MBTiles alongside them.
+    if ($script:Use4087) {
+        New-Item -ItemType Directory -Force -Path $script:DataDir4087 | Out-Null
+
+        Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT_4087' -Dest $script:RbtFile4087 -CheckRemote $true
+        Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN_4087' -Dest $script:TerrainFile4087 -CheckRemote $false
+
+        if (-not ((Test-Path $script:RbtFile4087 -PathType Leaf) -and (Get-Item $script:RbtFile4087).Length -gt 0)) {
+            Write-ErrorAndExit "$($script:RbtFile4087) is missing or empty after download"
+        }
+        if (-not ((Test-Path $script:TerrainFile4087 -PathType Leaf) -and (Get-Item $script:TerrainFile4087).Length -gt 0)) {
+            Write-ErrorAndExit "$($script:TerrainFile4087) is missing or empty after download"
+        }
     }
 }
 
@@ -506,7 +540,7 @@ function Initialize-RuntimeDirectories {
         'nginx/cache',
         'nginx/logs',
         'nginx/run',
-        'tileserver/data'
+        'tileserver/data/3857'
     )
     foreach ($dir in $dirs) {
         $fullPath = Join-RepoPath $dir
@@ -546,6 +580,7 @@ function Repair-ConfigLineEndings {
     $targets = @(
         (Join-RepoPath 'mapproxy/config/uwsgi.ini'),
         (Join-RepoPath 'mapproxy/config/mapproxy.yaml'),
+        (Join-RepoPath 'mapproxy/config/mapproxy.4087.yaml'),
         (Join-RepoPath 'mapproxy/config/logging.ini'),
         (Join-RepoPath 'nginx/config/nginx.conf'),
         (Join-RepoPath 'tileserver/config/config.json')
@@ -564,8 +599,19 @@ function Initialize-RuntimeEnvironment {
 # Deploy
 # ---------------------------------------------------------------------------
 
+# Returns the base compose file path -- docker-compose.4087.yaml with
+# -Use4087, else docker-compose.yaml. docker-compose.override.yaml (nginx)
+# layers on top of either one identically, since both declare the same
+# service names.
+function Get-BaseComposeFile {
+    if ($script:Use4087) {
+        return (Join-RepoPath 'docker-compose.4087.yaml')
+    }
+    return (Join-RepoPath 'docker-compose.yaml')
+}
+
 function Start-Stack {
-    $composeFiles = @('-f', (Join-RepoPath 'docker-compose.yaml'))
+    $composeFiles = @('-f', (Get-BaseComposeFile))
     if ($script:WithNginx) {
         $composeFiles += @('-f', (Join-RepoPath 'docker-compose.override.yaml'))
     } else {
@@ -606,10 +652,15 @@ Set-Location -Path $script:ScriptDir
 Import-DotEnv
 
 $script:DataDir = Join-RepoPath 'tileserver/data'
-$script:RbtFile = Join-Path $script:DataDir 'RBT.mbtiles'
-$script:TerrainFile = Join-Path $script:DataDir 'TERRAIN.mbtiles'
+$script:DataDir3857 = Join-Path $script:DataDir '3857'
+$script:RbtFile3857 = Join-Path $script:DataDir3857 'RBT.mbtiles'
+$script:TerrainFile3857 = Join-Path $script:DataDir3857 'TERRAIN.mbtiles'
+$script:DataDir4087 = Join-Path $script:DataDir '4087'
+$script:RbtFile4087 = Join-Path $script:DataDir4087 'RBT.mbtiles'
+$script:TerrainFile4087 = Join-Path $script:DataDir4087 'TERRAIN.mbtiles'
 $script:ForceDownload = [bool]$Force
 $script:WithNginx = -not [bool]$NoNginx
+$script:Use4087 = [bool]$Use4087
 $script:RebootRequired = $false
 
 $reRunSwitches = $PSBoundParameters.Keys | Where-Object { $PSBoundParameters[$_] } | ForEach-Object { "-$_" }
@@ -635,6 +686,9 @@ if ($env:OS -ne 'Windows_NT') {
 if (-not (Test-Path (Join-RepoPath 'docker-compose.yaml'))) {
     Write-ErrorAndExit 'docker-compose.yaml not found next to this script -- run it from inside the rbt-local repo checkout.'
 }
+if ($script:Use4087 -and -not (Test-Path (Join-RepoPath 'docker-compose.4087.yaml'))) {
+    Write-ErrorAndExit 'docker-compose.4087.yaml not found next to this script -- run it from inside the rbt-local repo checkout.'
+}
 
 try {
     $totalRamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
@@ -656,6 +710,14 @@ if ($runDownload) {
     if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_TERRAIN)) {
         Write-ErrorAndExit 'Set $env:S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles -- or add it to .env (see .env.example)'
     }
+    if ($script:Use4087) {
+        if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_RBT_4087)) {
+            Write-ErrorAndExit 'Set $env:S3_BUCKET_RBT_4087 to the bucket (and optional prefix) containing the EPSG:4087 RBT.mbtiles -- or add it to .env (see .env.example)'
+        }
+        if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_TERRAIN_4087)) {
+            Write-ErrorAndExit 'Set $env:S3_BUCKET_TERRAIN_4087 to the bucket (and optional prefix) containing the EPSG:4087 TERRAIN.mbtiles -- or add it to .env (see .env.example)'
+        }
+    }
 }
 
 if ($runInit) { Install-Prerequisites }
@@ -665,12 +727,27 @@ if ($runDeploy) { Start-Stack }
 
 Write-DeployLog 'Done.'
 if ($runDeploy -and -not $script:WithNginx) {
+    $baseFile = Get-BaseComposeFile
     $mapproxyPort = if ($env:MAPPROXY_PORT) { $env:MAPPROXY_PORT } else { '8081' }
     $tileserverPort = if ($env:TILESERVER_PORT) { $env:TILESERVER_PORT } else { '8080' }
-    Write-Host "  Logs:      docker compose -f docker-compose.yaml logs -f"
+    Write-Host "  Logs:      docker compose -f $baseFile logs -f"
     Write-Host "  MapProxy:  curl.exe -fsS http://localhost:$mapproxyPort/wmts/1.0.0/WMTSCapabilities.xml"
     Write-Host "  Tiles:     curl.exe -fsS http://localhost:$tileserverPort/"
-    Write-Host "  Stop:      docker compose -f docker-compose.yaml down --remove-orphans"
+    if ($script:Use4087) {
+        $tileserver4087Port = if ($env:TILESERVER_4087_PORT) { $env:TILESERVER_4087_PORT } else { '8083' }
+        Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$tileserver4087Port/"
+    }
+    Write-Host "  Stop:      docker compose -f $baseFile down --remove-orphans"
+} elseif ($runDeploy -and $script:Use4087) {
+    # docker compose only auto-discovers docker-compose.yaml/.override.yaml,
+    # not docker-compose.4087.yaml, so -f must stay explicit here.
+    $baseFile = Get-BaseComposeFile
+    $overrideFile = Join-RepoPath 'docker-compose.override.yaml'
+    $nginxPort = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
+    Write-Host "  Logs:   docker compose -f $baseFile -f $overrideFile logs -f"
+    Write-Host "  Health: curl.exe -fsS http://localhost:$nginxPort/healthz"
+    Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$nginxPort/tileservergl4087/"
+    Write-Host "  Stop:   docker compose -f $baseFile -f $overrideFile down --remove-orphans"
 } elseif ($runDeploy) {
     $nginxPort = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
     Write-Host "  Logs:   docker compose logs -f"

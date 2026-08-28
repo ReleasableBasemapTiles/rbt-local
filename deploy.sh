@@ -12,11 +12,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 DATA_DIR="$SCRIPT_DIR/tileserver/data"
-RBT_FILE="$DATA_DIR/RBT.mbtiles"
-TERRAIN_FILE="$DATA_DIR/TERRAIN.mbtiles"
+DATA_DIR_3857="$DATA_DIR/3857"
+RBT_FILE_3857="$DATA_DIR_3857/RBT.mbtiles"
+TERRAIN_FILE_3857="$DATA_DIR_3857/TERRAIN.mbtiles"
+DATA_DIR_4087="$DATA_DIR/4087"
+RBT_FILE_4087="$DATA_DIR_4087/RBT.mbtiles"
+TERRAIN_FILE_4087="$DATA_DIR_4087/TERRAIN.mbtiles"
 
 FORCE_DOWNLOAD=0
 WITH_NGINX=1
+USE_4087=0
 
 log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARNING:\033[0m %s\n' "$*" >&2; }
@@ -35,7 +40,7 @@ of the order given on the command line):
               Uses Homebrew on macOS, apt on Ubuntu/Debian, or dnf on
               Fedora/RHEL, whichever this host's /etc/os-release identifies.
   --download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
-              tileserver/data/.
+              tileserver/data/3857/.
   --perm      Fix mapproxy/nginx runtime directory permissions (a no-op on
               macOS -- see below).
   --deploy    Run `docker compose up -d`.
@@ -47,6 +52,14 @@ of the order given on the command line):
               mapproxy (port ${MAPPROXY_PORT:-8081}) and tileservergl
               (port ${TILESERVER_PORT:-8080}) instead. Only relevant with
               --deploy, or with no step flags.
+  --4087      Deploy docker-compose.4087.yaml instead of docker-compose.yaml
+              -- adds a second TileserverGL container (tileservergl4087)
+              serving EPSG:4087 MBTiles, and points mapproxy at
+              mapproxy.4087.yaml so its EPSG:4326 caches reproject from
+              EPSG:4087 instead of EPSG:3857 (see docs/deployment-4087.md).
+              Combines with --no-nginx and --force. With --download (or no
+              step flags), also downloads the EPSG:4087 RBT.mbtiles/
+              TERRAIN.mbtiles into tileserver/data/4087/.
 
 Usage:
   S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
@@ -55,6 +68,7 @@ Usage:
   ./deploy.sh --deploy              # just (re)start the stack
   ./deploy.sh --force               # full run, force re-download
   ./deploy.sh --no-nginx            # full run, skip the local nginx
+  ./deploy.sh --4087                # full run, EPSG:4087 dual-tileserver stack
 
 Run this as your normal (non-root) user, not via `sudo`. On Linux it
 escalates internally with sudo only for the specific steps that need root
@@ -72,6 +86,13 @@ in .env):
                       "my-bucket" or "s3://my-bucket/exports". Must contain
                       RBT.mbtiles.
   S3_BUCKET_TERRAIN  Same, but must contain TERRAIN.mbtiles.
+
+Additional environment variables (only enforced when the download step
+runs together with --4087):
+  S3_BUCKET_RBT_4087      Same as S3_BUCKET_RBT, but for the EPSG:4087
+                           RBT.mbtiles.
+  S3_BUCKET_TERRAIN_4087  Same as S3_BUCKET_TERRAIN, but for the EPSG:4087
+                           TERRAIN.mbtiles.
 
 Re-running this script is safe: package installs are skipped when already
 present. TERRAIN.mbtiles is only downloaded once (it never changes upstream).
@@ -449,13 +470,26 @@ fetch_mbtiles() {
 }
 
 download_mbtiles() {
-  mkdir -p "$DATA_DIR"
+  mkdir -p "$DATA_DIR_3857"
 
-  fetch_mbtiles S3_BUCKET_RBT "$RBT_FILE" 1
-  fetch_mbtiles S3_BUCKET_TERRAIN "$TERRAIN_FILE" 0
+  fetch_mbtiles S3_BUCKET_RBT "$RBT_FILE_3857" 1
+  fetch_mbtiles S3_BUCKET_TERRAIN "$TERRAIN_FILE_3857" 0
 
-  [[ -s "$RBT_FILE" ]] || die "$RBT_FILE is missing or empty after download"
-  [[ -s "$TERRAIN_FILE" ]] || die "$TERRAIN_FILE is missing or empty after download"
+  [[ -s "$RBT_FILE_3857" ]] || die "$RBT_FILE_3857 is missing or empty after download"
+  [[ -s "$TERRAIN_FILE_3857" ]] || die "$TERRAIN_FILE_3857 is missing or empty after download"
+
+  # The --4087 stack still runs the EPSG:3857 tileservergl container too
+  # (see docker-compose.4087.yaml), so the downloads above always run;
+  # this just adds the second container's EPSG:4087 MBTiles alongside them.
+  if [[ "$USE_4087" -eq 1 ]]; then
+    mkdir -p "$DATA_DIR_4087"
+
+    fetch_mbtiles S3_BUCKET_RBT_4087 "$RBT_FILE_4087" 1
+    fetch_mbtiles S3_BUCKET_TERRAIN_4087 "$TERRAIN_FILE_4087" 0
+
+    [[ -s "$RBT_FILE_4087" ]] || die "$RBT_FILE_4087 is missing or empty after download"
+    [[ -s "$TERRAIN_FILE_4087" ]] || die "$TERRAIN_FILE_4087 is missing or empty after download"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -479,8 +513,19 @@ fix_permissions() {
 # Deploy
 # ---------------------------------------------------------------------------
 
+# Prints the base compose file path -- docker-compose.4087.yaml with --4087,
+# else docker-compose.yaml. docker-compose.override.yaml (nginx) layers on
+# top of either one identically, since both declare the same service names.
+base_compose_file() {
+  if [[ "$USE_4087" -eq 1 ]]; then
+    echo "$SCRIPT_DIR/docker-compose.4087.yaml"
+  else
+    echo "$SCRIPT_DIR/docker-compose.yaml"
+  fi
+}
+
 deploy_stack() {
-  local compose_files=(-f "$SCRIPT_DIR/docker-compose.yaml")
+  local compose_files=(-f "$(base_compose_file)")
   if [[ "$WITH_NGINX" -eq 1 ]]; then
     compose_files+=(-f "$SCRIPT_DIR/docker-compose.override.yaml")
   else
@@ -537,6 +582,9 @@ for arg in "$@"; do
     --no-nginx)
       WITH_NGINX=0
       ;;
+    --4087)
+      USE_4087=1
+      ;;
     *)
       die "Unknown argument: $arg (use --help for usage)"
       ;;
@@ -570,10 +618,18 @@ fi
 
 [[ -f "$SCRIPT_DIR/docker-compose.yaml" ]] ||
   die "docker-compose.yaml not found next to this script -- run it from inside the rbt-local repo checkout."
+if [[ "$USE_4087" -eq 1 ]]; then
+  [[ -f "$SCRIPT_DIR/docker-compose.4087.yaml" ]] ||
+    die "docker-compose.4087.yaml not found next to this script -- run it from inside the rbt-local repo checkout."
+fi
 
 if [[ "$RUN_DOWNLOAD" -eq 1 ]]; then
   : "${S3_BUCKET_RBT:?Set S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. S3_BUCKET_RBT=my-bucket -- or add it to .env (see .env.example)}"
   : "${S3_BUCKET_TERRAIN:?Set S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles -- or add it to .env (see .env.example)}"
+  if [[ "$USE_4087" -eq 1 ]]; then
+    : "${S3_BUCKET_RBT_4087:?Set S3_BUCKET_RBT_4087 to the bucket (and optional prefix) containing the EPSG:4087 RBT.mbtiles -- or add it to .env (see .env.example)}"
+    : "${S3_BUCKET_TERRAIN_4087:?Set S3_BUCKET_TERRAIN_4087 to the bucket (and optional prefix) containing the EPSG:4087 TERRAIN.mbtiles -- or add it to .env (see .env.example)}"
+  fi
 fi
 
 if [[ "$RUN_INIT" -eq 1 ]]; then
@@ -591,10 +647,22 @@ fi
 
 log "Done."
 if [[ "$RUN_DEPLOY" -eq 1 && "$WITH_NGINX" -eq 0 ]]; then
-  echo "  Logs:      docker compose -f docker-compose.yaml logs -f"
+  base_file="$(base_compose_file)"
+  echo "  Logs:      docker compose -f $base_file logs -f"
   echo "  MapProxy:  curl -fsS http://localhost:\${MAPPROXY_PORT:-8081}/wmts/1.0.0/WMTSCapabilities.xml"
   echo "  Tiles:     curl -fsS http://localhost:\${TILESERVER_PORT:-8080}/"
-  echo "  Stop:      docker compose -f docker-compose.yaml down --remove-orphans"
+  if [[ "$USE_4087" -eq 1 ]]; then
+    echo "  Tiles (4087): curl -fsS http://localhost:\${TILESERVER_4087_PORT:-8083}/"
+  fi
+  echo "  Stop:      docker compose -f $base_file down --remove-orphans"
+elif [[ "$USE_4087" -eq 1 ]]; then
+  # docker compose only auto-discovers docker-compose.yaml/.override.yaml,
+  # not docker-compose.4087.yaml, so -f must stay explicit here.
+  base_file="$(base_compose_file)"
+  echo "  Logs:   docker compose -f $base_file -f docker-compose.override.yaml logs -f"
+  echo "  Health: curl -fsS http://localhost:\${NGINX_PORT:-8082}/healthz"
+  echo "  Tiles (4087): curl -fsS http://localhost:\${NGINX_PORT:-8082}/tileservergl4087/"
+  echo "  Stop:   docker compose -f $base_file -f docker-compose.override.yaml down --remove-orphans"
 else
   echo "  Logs:   docker compose logs -f"
   echo "  Health: curl -fsS http://localhost:\${NGINX_PORT:-8082}/healthz"
