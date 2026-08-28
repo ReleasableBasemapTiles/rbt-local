@@ -131,9 +131,8 @@ flowchart LR
   client -->|"port 8082"| nginx
   nginx -->|"/mapproxy/* and /"| mapproxy
   nginx -->|"/tileservergl/*"| tileservergl
-  nginx -->|"/tileservergl4087/*"| tileservergl4087
-  mapproxy -->|"EPSG:3857 and 3395 layers"| tileservergl
-  mapproxy -->|"EPSG:4326 layers, via EPSG:4087"| tileservergl4087
+  mapproxy -->|"EPSG:3857 layers"| tileservergl
+  mapproxy -->|"EPSG:4326 layers"| tileservergl4087
   mapproxy --- tilecache
   tileservergl --- mbtiles3857
   tileservergl4087 --- mbtiles4087
@@ -161,11 +160,10 @@ flowchart LR
   end
 
   client --> edge
-  client -.->|"direct preview"| tileservergl4087
   edge -->|"/wms*, /wmts/*, /service*, /demo/*"| mapproxy
   edge -->|"/styles/*, /data/*, /styles.json, /"| tileservergl
-  mapproxy -->|"EPSG:3857 and 3395 layers"| tileservergl
-  mapproxy -->|"EPSG:4326 layers, via EPSG:4087"| tileservergl4087
+  mapproxy -->|"EPSG:3857 layers"| tileservergl
+  mapproxy -->|"EPSG:4326 layers"| tileservergl4087
   mapproxy --- tilecache
   tileservergl --- mbtiles3857
   tileservergl4087 --- mbtiles4087
