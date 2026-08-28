@@ -22,3 +22,7 @@ nginx normally comes from `docker-compose.override.yaml`, which Docker Compose m
   - TileserverGL target/origin: `/styles/*`, `/data/*`, `/fonts.json`, `/styles.json`, `/`
 - You lose nginx's local HTTP response cache and gzip compression -- CloudFront's edge caching and compression are the intended replacement. MapProxy's own GeoPackage tile cache (`mapproxy/data`) is unaffected either way; it caches upstream TileserverGL tiles regardless of what's in front of MapProxy.
 - If a client needs the exact `example.org/mapproxy/...` / `example.org/tileservergl/...` URLs nginx currently produces, that rewrite has to happen at the ALB/CloudFront layer (e.g. a CloudFront Function) -- it isn't something this repo can do once nginx is out of the path.
+
+## Combining with the EPSG:4087 deployment
+
+`--no-nginx`/`-NoNginx` combines freely with `--4087`/`-Use4087` (see [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](deployment-4087.md)): `./deploy.sh --4087 --no-nginx` deploys `docker-compose.4087.yaml` alone, publishing `tileservergl4087`'s port (`TILESERVER_4087_PORT`, default `8083`) directly alongside `mapproxy` and `tileservergl`, with no nginx in front of any of them.

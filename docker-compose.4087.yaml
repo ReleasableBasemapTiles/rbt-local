@@ -1,0 +1,122 @@
+# Sibling of docker-compose.yaml: the same "mapproxy" + "tileservergl"
+# services, plus a second TileserverGL container ("tileservergl4087") that
+# serves EPSG:4087 MBTiles from tileserver/data/4087 instead of
+# tileserver/data/3857, using the same tileserver/fonts and tileserver/styles.
+# mapproxy is repointed at mapproxy.4087.yaml (see its comment header),
+# whose EPSG:4326 caches reproject from the new EPSG:4087 caches instead of
+# the EPSG:3857 ones. Service names are unchanged from docker-compose.yaml,
+# so docker-compose.override.yaml (the optional nginx front end) merges in
+# unmodified:
+#
+#   docker compose -f docker-compose.4087.yaml up -d                                     # with nginx
+#   docker compose -f docker-compose.4087.yaml -f docker-compose.override.yaml up -d      # same, explicit
+#   docker compose -f docker-compose.4087.yaml up -d --no-deps ... # (not needed; shown for contrast with deploy.sh --no-nginx)
+#
+# or simply `./deploy.sh --4087` / `.\deploy.ps1 -Use4087`. See
+# docs/deployment-4087.md for the full picture, including why this
+# improves EPSG:4326 output over the default stack's EPSG:3857 reprojection.
+#
+# This file and docker-compose.yaml are alternatives, not additions -- both
+# declare a container named "mapproxy", so run `docker compose down
+# --remove-orphans` before switching from one to the other.
+services:
+  mapproxy:
+    # The "-nginx" tag is the only upstream variant that has uwsgi installed
+    # (see mapproxy's Dockerfile: `pip install uwsgi` only happens in that
+    # build stage). We don't use its bundled nginx/run-nginx.sh -- we run
+    # uwsgi directly instead of the image's default CMD, fronted by our own
+    # optional nginx service (see docker-compose.override.yaml) and/or
+    # published directly below for an external proxy (e.g. AWS ALB) to use.
+    image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
+    container_name: mapproxy
+    # uwsgi.ini's own `pyargv` points at mapproxy.yaml; the --pyargv given
+    # here overrides that, which is what selects mapproxy.4087.yaml instead.
+    command:
+      [
+        "uwsgi",
+        "--ini",
+        "/mapproxy/config/uwsgi.ini",
+        "--pyargv",
+        "/mapproxy/config/mapproxy.4087.yaml"
+      ]
+    environment:
+      - UWSGI_PROCESSES=${UWSGI_PROCESSES:-8}
+      - UWSGI_THREADS=${UWSGI_THREADS:-4}
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${MAPPROXY_PORT:-8081}:5000"
+    volumes:
+      - ./mapproxy/config:/mapproxy/config:ro
+      - ./mapproxy/data:/data
+      - ./mapproxy/locks:/locks
+      - ./mapproxy/tile_locks:/tile_locks
+    depends_on:
+      tileservergl:
+        condition: service_healthy
+      tileservergl4087:
+        condition: service_healthy
+    shm_size: ${MAPPROXY_SHM_SIZE:-2gb}
+    restart: unless-stopped
+    networks:
+      - rbt-network
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  tileservergl:
+    image: maptiler/tileserver-gl:v5.7.0-pre.0
+    container_name: tileservergl
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_PORT:-8080}:8080"
+    volumes:
+      # EPSG:3857 (Web Mercator) MBTiles -- see the tileservergl4087 service
+      # below, which mounts tileserver/data/4087 instead.
+      - ./tileserver/data/3857:/data
+      - ./tileserver/fonts:/fonts
+      - ./tileserver/styles:/styles
+      - ./tileserver/config:/config:ro
+    command: ["-c", "/config/config.json"]
+    restart: unless-stopped
+    shm_size: ${TILESERVER_SHM_SIZE:-2gb}
+    networks:
+      - rbt-network
+    healthcheck:
+      test: ["CMD", "node", "/usr/src/app/src/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+  # Second TileserverGL container, EPSG:4087 -- same image, fonts, styles,
+  # and tileserver/config/config.json as "tileservergl" above, but mounting
+  # tileserver/data/4087 at /data instead of tileserver/data/3857.
+  # config.json's mbtiles paths resolve relative to /config, so this is the
+  # only difference needed; the EPSG:4087 RBT.mbtiles/TERRAIN.mbtiles must
+  # keep those exact filenames.
+  tileservergl4087:
+    image: maptiler/tileserver-gl:v5.7.0-pre.0
+    container_name: tileservergl4087
+    ports:
+      - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_4087_PORT:-8083}:8080"
+    volumes:
+      - ./tileserver/data/4087:/data
+      - ./tileserver/fonts:/fonts
+      - ./tileserver/styles:/styles
+      - ./tileserver/config:/config:ro
+    command: ["-c", "/config/config.json"]
+    restart: unless-stopped
+    shm_size: ${TILESERVER_SHM_SIZE:-2gb}
+    networks:
+      - rbt-network
+    healthcheck:
+      test: ["CMD", "node", "/usr/src/app/src/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+
+networks:
+  rbt-network:
+    driver: bridge

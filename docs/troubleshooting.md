@@ -40,7 +40,7 @@ This means the `mapproxy` container isn't listening where nginx expects it (`map
 
 ## TileserverGL Shows No Styles, or Styles Render Blank
 
-- **Solution**: Confirm `tileserver/data/TERRAIN.mbtiles` and `tileserver/data/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/`). A partial download loads without error but renders blank or incomplete tiles.
+- **Solution**: Confirm `tileserver/data/3857/TERRAIN.mbtiles` and `tileserver/data/3857/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/3857/`). A partial download loads without error but renders blank or incomplete tiles. (With `--4087`/`-Use4087`, also check `tileserver/data/4087/`.)
 
 ## `mapproxy` Container Exits, or Can't Write Its Cache
 

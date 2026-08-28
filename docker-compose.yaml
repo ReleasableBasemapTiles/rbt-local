@@ -39,7 +39,9 @@ services:
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_PORT:-8080}:8080"
     volumes:
-      - ./tileserver/data:/data
+      # EPSG:3857 (Web Mercator) MBTiles -- see docker-compose.4087.yaml's
+      # tileservergl4087 service, which mounts tileserver/data/4087 instead.
+      - ./tileserver/data/3857:/data
       - ./tileserver/fonts:/fonts
       - ./tileserver/styles:/styles
       - ./tileserver/config:/config:ro
