@@ -55,6 +55,124 @@ Both scripts are safe to re-run: package installs are skipped when already prese
 
 Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
+## Deployment Options
+
+This repository's three Compose files combine into four deployments. All four publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326 -- so what differs is whether a local nginx fronts the services, and which projection the EPSG:4326 tiles are reprojected from. The diagrams below show default ports; every port is configurable in `.env` (see [.env.example](.env.example)). Options 3 and 4 name `docker-compose.4087.yaml` with an explicit `-f` instead of relying on the auto-discovered `docker-compose.yaml`, so `docker compose ps`/`logs`/`down` need those same `-f` flags -- `./deploy.sh`'s and `.\deploy.ps1`'s closing hints print the exact command for whichever stack you just deployed.
+
+### 1. Default: nginx in front of both services
+
+`docker compose up -d`, `./deploy.sh`, and `.\deploy.ps1` all deploy this stack. Compose merges `docker-compose.yaml` with `docker-compose.override.yaml`, which adds the local nginx reverse proxy and response cache, so everything is reachable through a single port. MapProxy and TileserverGL still publish their own ports too, which is what the [Direct Access](docs/gis-clients.md#3-direct-access-optional) section of the GIS clients guide uses.
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+
+  subgraph stack["docker-compose.yaml + docker-compose.override.yaml"]
+    nginx["nginx<br/>port 8082"]
+    mapproxy["mapproxy<br/>port 8081<br/>caches EPSG:3857<br/>reprojects 3395 and 4326 from it"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    tilecache[("mapproxy/data<br/>tile cache")]
+    mbtiles[("tileserver/data/3857")]
+  end
+
+  client -->|"port 8082"| nginx
+  client -.->|"direct"| mapproxy
+  client -.->|"direct"| tileservergl
+  nginx -->|"/mapproxy/* and /"| mapproxy
+  nginx -->|"/tileservergl/*"| tileservergl
+  mapproxy -->|"renders uncached tiles"| tileservergl
+  mapproxy --- tilecache
+  tileservergl --- mbtiles
+```
+
+### 2. Default without nginx (AWS ALB / CloudFront)
+
+`./deploy.sh --no-nginx`, `.\deploy.ps1 -NoNginx`, or `docker compose -f docker-compose.yaml up -d` names the base file explicitly, which opts out of the automatic override merge, so nginx never starts. MapProxy and TileserverGL each serve their native paths -- no `/mapproxy` or `/tileservergl` prefix -- on their own published port, ready to be used as ALB target groups or CloudFront origins. See [Advanced: Deploying Without nginx](docs/advanced-deployment.md).
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+  edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
+
+  subgraph stack["docker-compose.yaml only"]
+    mapproxy["mapproxy<br/>port 8081<br/>caches EPSG:3857<br/>reprojects 3395 and 4326 from it"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    tilecache[("mapproxy/data<br/>tile cache")]
+    mbtiles[("tileserver/data/3857")]
+  end
+
+  client --> edge
+  edge -->|"/wms*, /wmts/*, /service*, /demo/*"| mapproxy
+  edge -->|"/styles/*, /data/*, /styles.json, /"| tileservergl
+  mapproxy -->|"renders uncached tiles"| tileservergl
+  mapproxy --- tilecache
+  tileservergl --- mbtiles
+```
+
+### 3. EPSG:4087 dual-TileserverGL with nginx
+
+`./deploy.sh --4087` or `.\deploy.ps1 -Use4087` deploys `docker-compose.4087.yaml` in place of `docker-compose.yaml`, adding a second TileserverGL container that serves EPSG:4087 MBTiles from `tileserver/data/4087`, with nginx fronting all of it exactly like option 1. MapProxy runs `mapproxy.4087.yaml`, which builds its EPSG:4326 caches from that container instead of from EPSG:3857 -- a pure unit-scale conversion rather than a resample away from Web Mercator's distortion, so EPSG:4326 output stays sharp away from the equator. The EPSG:3857 and EPSG:3395 layers still come from the original container, and the published layer list is unchanged. See [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md).
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+
+  subgraph stack["docker-compose.4087.yaml + docker-compose.override.yaml"]
+    nginx["nginx<br/>port 8082"]
+    mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]
+    tilecache[("mapproxy/data<br/>tile cache")]
+    mbtiles3857[("tileserver/data/3857")]
+    mbtiles4087[("tileserver/data/4087")]
+    shared[("tileserver/fonts<br/>tileserver/styles<br/>tileserver/config")]
+  end
+
+  client -->|"port 8082"| nginx
+  nginx -->|"/mapproxy/* and /"| mapproxy
+  nginx -->|"/tileservergl/*"| tileservergl
+  nginx -->|"/tileservergl4087/*"| tileservergl4087
+  mapproxy -->|"EPSG:3857 and 3395 layers"| tileservergl
+  mapproxy -->|"EPSG:4326 layers, via EPSG:4087"| tileservergl4087
+  mapproxy --- tilecache
+  tileservergl --- mbtiles3857
+  tileservergl4087 --- mbtiles4087
+  tileservergl --- shared
+  tileservergl4087 --- shared
+```
+
+### 4. EPSG:4087 dual-TileserverGL without nginx
+
+`./deploy.sh --4087 --no-nginx`, `.\deploy.ps1 -Use4087 -NoNginx`, or `docker compose -f docker-compose.4087.yaml up -d` combines options 2 and 3: the same EPSG:4087-backed EPSG:4326 reprojection as option 3, but with nginx skipped like option 2. All three containers publish their own port directly -- MapProxy (`MAPPROXY_PORT`, default `8081`), the EPSG:3857 TileserverGL (`TILESERVER_PORT`, default `8080`), and the EPSG:4087 TileserverGL (`TILESERVER_4087_PORT`, default `8083`) -- ready to sit behind an ALB/CloudFront the same way option 2 does. See [Advanced: Deploying Without nginx](docs/advanced-deployment.md#combining-with-the-epsg4087-deployment).
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+  edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
+
+  subgraph stack["docker-compose.4087.yaml only"]
+    mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]
+    tilecache[("mapproxy/data<br/>tile cache")]
+    mbtiles3857[("tileserver/data/3857")]
+    mbtiles4087[("tileserver/data/4087")]
+    shared[("tileserver/fonts<br/>tileserver/styles<br/>tileserver/config")]
+  end
+
+  client --> edge
+  client -.->|"direct preview"| tileservergl4087
+  edge -->|"/wms*, /wmts/*, /service*, /demo/*"| mapproxy
+  edge -->|"/styles/*, /data/*, /styles.json, /"| tileservergl
+  mapproxy -->|"EPSG:3857 and 3395 layers"| tileservergl
+  mapproxy -->|"EPSG:4326 layers, via EPSG:4087"| tileservergl4087
+  mapproxy --- tilecache
+  tileservergl --- mbtiles3857
+  tileservergl4087 --- mbtiles4087
+  tileservergl --- shared
+  tileservergl4087 --- shared
+```
+
 ## Verifying It's Working
 
 See [Verifying Your Installation](docs/verify.md) for a full checklist. The short version:

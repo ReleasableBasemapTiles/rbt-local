@@ -8,9 +8,8 @@
 # so docker-compose.override.yaml (the optional nginx front end) merges in
 # unmodified:
 #
-#   docker compose -f docker-compose.4087.yaml up -d                                     # with nginx
-#   docker compose -f docker-compose.4087.yaml -f docker-compose.override.yaml up -d      # same, explicit
-#   docker compose -f docker-compose.4087.yaml up -d --no-deps ... # (not needed; shown for contrast with deploy.sh --no-nginx)
+#   docker compose -f docker-compose.4087.yaml -f docker-compose.override.yaml up -d      # with nginx
+#   docker compose -f docker-compose.4087.yaml up -d                                      # without nginx
 #
 # or simply `./deploy.sh --4087` / `.\deploy.ps1 -Use4087`. See
 # docs/deployment-4087.md for the full picture, including why this

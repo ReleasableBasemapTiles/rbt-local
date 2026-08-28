@@ -26,3 +26,5 @@ nginx normally comes from `docker-compose.override.yaml`, which Docker Compose m
 ## Combining with the EPSG:4087 deployment
 
 `--no-nginx`/`-NoNginx` combines freely with `--4087`/`-Use4087` (see [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](deployment-4087.md)): `./deploy.sh --4087 --no-nginx` deploys `docker-compose.4087.yaml` alone, publishing `tileservergl4087`'s port (`TILESERVER_4087_PORT`, default `8083`) directly alongside `mapproxy` and `tileservergl`, with no nginx in front of any of them.
+
+This is the fourth of the four deployments this repository supports -- see [Deployment Options](../README.md#deployment-options) in the README for a diagram of all four side by side.

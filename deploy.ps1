@@ -69,6 +69,7 @@ Usage:
   .\deploy.ps1 -Force                 # full run, force re-download
   .\deploy.ps1 -NoNginx               # full run, skip the local nginx
   .\deploy.ps1 -Use4087               # full run, EPSG:4087 dual-tileserver stack
+  .\deploy.ps1 -Use4087 -NoNginx      # same, without the local nginx
 
 Run this from an elevated (Administrator) PowerShell only when using -Init
 (or with no step switches, since -Init then runs too) -- installing software
