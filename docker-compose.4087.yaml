@@ -2,10 +2,11 @@
 # services, plus a second TileserverGL container ("tileservergl4087") that
 # serves EPSG:4087 MBTiles from tileserver/data/4087 instead of
 # tileserver/data/3857, using the same tileserver/fonts and tileserver/styles.
-# mapproxy is repointed at mapproxy.4087.yaml (see its comment header),
-# whose EPSG:4326 caches reproject from the new EPSG:4087 caches instead of
-# the EPSG:3857 ones. Service names are unchanged from docker-compose.yaml,
-# so docker-compose.override.yaml (the optional nginx front end) merges in
+# mapproxy's config volume mount is overridden below to bind-mount
+# mapproxy.4087.yaml over mapproxy.yaml (see its comment header), whose
+# EPSG:4326 caches reproject from the new EPSG:4087 caches instead of the
+# EPSG:3857 ones. Service names are unchanged from docker-compose.yaml, so
+# docker-compose.override.yaml (the optional nginx front end) merges in
 # unmodified:
 #
 #   docker compose -f docker-compose.4087.yaml -f docker-compose.override.yaml up -d      # with nginx
@@ -28,16 +29,7 @@ services:
     # published directly below for an external proxy (e.g. AWS ALB) to use.
     image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
     container_name: mapproxy
-    # uwsgi.ini's own `pyargv` points at mapproxy.yaml; the --pyargv given
-    # here overrides that, which is what selects mapproxy.4087.yaml instead.
-    command:
-      [
-        "uwsgi",
-        "--ini",
-        "/mapproxy/config/uwsgi.ini",
-        "--pyargv",
-        "/mapproxy/config/mapproxy.4087.yaml"
-      ]
+    command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
     environment:
       - UWSGI_PROCESSES=${UWSGI_PROCESSES:-8}
       - UWSGI_THREADS=${UWSGI_THREADS:-4}
@@ -45,6 +37,13 @@ services:
       - "${BIND_ADDR:-0.0.0.0}:${MAPPROXY_PORT:-8081}:5000"
     volumes:
       - ./mapproxy/config:/mapproxy/config:ro
+      # The image's /mapproxy/app.py hardcodes
+      # make_wsgi_app('/mapproxy/config/mapproxy.yaml') and ignores uwsgi's
+      # pyargv, so bind-mounting the 4087 config over that exact path is
+      # the only way to select it. Docker mounts bind mounts in order of
+      # destination path depth, so this file mount is applied after (and
+      # shadows part of) the directory mount above.
+      - ./mapproxy/config/mapproxy.4087.yaml:/mapproxy/config/mapproxy.yaml:ro
       - ./mapproxy/data:/data
       - ./mapproxy/locks:/locks
       - ./mapproxy/tile_locks:/tile_locks

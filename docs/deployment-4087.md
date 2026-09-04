@@ -13,7 +13,7 @@ EPSG:4087 shares EPSG:4326's linear scaling: one degree of latitude or longitude
 ## What's different
 
 - A second TileserverGL container, `tileservergl4087`, mounts `tileserver/data/4087` at `/data` -- the existing `tileservergl` container mounts `tileserver/data/3857` the same way -- while both share the same `tileserver/fonts`, `tileserver/styles`, and `tileserver/config/config.json`. The EPSG:4087 MBTiles must keep the filenames `RBT.mbtiles` and `TERRAIN.mbtiles`, since both containers read the same `config.json`.
-- MapProxy runs [mapproxy/config/mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml) instead of `mapproxy.yaml`. It adds an `equidistant_4087` grid and six `rbt_*_4087_cache`/`rbt_*_4087_source` pairs sourced from `tileservergl4087`, and repoints each `rbt_*_4326_cache` at the matching `rbt_*_4087_cache` instead of `rbt_*_3857_cache`.
+- MapProxy runs [mapproxy/config/mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml) instead of `mapproxy.yaml`. The MapProxy image's WSGI entry point always loads whatever is at `/mapproxy/config/mapproxy.yaml` inside the container (it has no config-path environment variable or CLI flag), so the `mapproxy` service's `volumes` bind-mount `mapproxy.4087.yaml` from the host directly onto that path, shadowing the regular `mapproxy.yaml`. `mapproxy.4087.yaml` adds an `equidistant_4087` grid and six `rbt_*_4087_cache`/`rbt_*_4087_source` pairs sourced from `tileservergl4087`, and repoints each `rbt_*_4326_cache` at the matching `rbt_*_4087_cache` instead of `rbt_*_3857_cache`.
 - The EPSG:4087 caches are internal only -- MapProxy still publishes the same 18 layers (six styles x EPSG:3857/3395/4326) as the default stack. No client-visible URL changes.
 - The optional nginx service ([docker-compose.override.yaml](../docker-compose.override.yaml)) gains a `/tileservergl4087/` path for previewing the second container's styles directly, alongside the existing `/tileservergl/` and `/mapproxy/` paths.
 
@@ -44,6 +44,20 @@ docker compose -f docker-compose.4087.yaml up -d                                
 docker compose -f docker-compose.4087.yaml [-f docker-compose.override.yaml] ps   # all services "running"/"healthy"
 curl -fsS http://localhost:${TILESERVER_4087_PORT:-8083}/                        # tileservergl4087 preview UI
 curl -fsS http://localhost:8082/tileservergl4087/                                # same, through nginx
+```
+
+All of the above passing just means the containers are up -- it doesn't confirm MapProxy actually loaded `mapproxy.4087.yaml` rather than silently falling back to the default `mapproxy.yaml` (see [Troubleshooting](troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged) for how that failure mode used to happen). To confirm the right config is live inside the container:
+
+```bash
+docker exec mapproxy head -1 /mapproxy/config/mapproxy.yaml
+# expect: "# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its"
+```
+
+And to confirm MapProxy is actually querying `tileservergl4087` for EPSG:4326 tiles:
+
+```bash
+curl -fsS "http://localhost:${MAPPROXY_PORT:-8081}/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o /dev/null
+docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
 ```
 
 ## Ports
