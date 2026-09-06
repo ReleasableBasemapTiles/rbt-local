@@ -21,12 +21,18 @@
 # --remove-orphans` before switching from one to the other.
 services:
   mapproxy:
-    # The "-nginx" tag is the only upstream variant that has uwsgi installed
-    # (see mapproxy's Dockerfile: `pip install uwsgi` only happens in that
-    # build stage). We don't use its bundled nginx/run-nginx.sh -- we run
-    # uwsgi directly instead of the image's default CMD, fronted by our own
-    # optional nginx service (see docker-compose.override.yaml) and/or
-    # published directly below for an external proxy (e.g. AWS ALB) to use.
+    # uwsgi is only installed in the "nginx" build stage of mapproxy's
+    # Dockerfiles (`pip install uwsgi`), so the "-nginx" tags are the only
+    # upstream variants that have it -- plain "7.0.0" and "-dev" do not.
+    # We use the Debian "-nginx" tag over "-alpine-nginx" (which also has
+    # uwsgi): alpine only saves ~60MiB of a ~400MiB image, has no bash for
+    # the healthcheck below, and musl's 128KB default thread stack and
+    # slower multi-threaded allocator are a poor fit for uwsgi threads
+    # running GDAL/PROJ. We don't use the image's bundled nginx or
+    # run-nginx.sh -- we run uwsgi directly instead of the default CMD,
+    # fronted by our own optional nginx service (see
+    # docker-compose.override.yaml) and/or published directly below for an
+    # external proxy (e.g. AWS ALB) to use.
     image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
     container_name: mapproxy
     command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
@@ -64,7 +70,7 @@ services:
       start_period: 20s
 
   tileservergl:
-    image: maptiler/tileserver-gl:v5.7.0-pre.0
+    image: maptiler/tileserver-gl:v5.7.0-pre.1
     container_name: tileservergl
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_PORT:-8080}:8080"
@@ -94,7 +100,7 @@ services:
   # only difference needed; the EPSG:4087 RBT.mbtiles/TERRAIN.mbtiles must
   # keep those exact filenames.
   tileservergl4087:
-    image: maptiler/tileserver-gl:v5.7.0-pre.0
+    image: maptiler/tileserver-gl:v5.7.0-pre.1
     container_name: tileservergl4087
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_4087_PORT:-8083}:8080"
