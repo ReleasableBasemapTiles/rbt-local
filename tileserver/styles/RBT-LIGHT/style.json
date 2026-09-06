@@ -2,7 +2,7 @@
   "version": 8,
   "name": "RBT-LIGHT",
   "metadata": {
-    "rbt:version": "1.1.0",
+    "rbt:version": "2.0.0",
     "license:info": {
       "data:licence": "© OpenStreetMap contributor https://www.openstreetmap.org/copyright",
       "style:license": {
@@ -252,6 +252,58 @@
       }
     },
     {
+      "id": "conservationArea--fill",
+      "type": "fill",
+      "metadata": {
+        "feature:info": {
+          "feature:name": [
+            "Park",
+            "Golf Course"
+          ],
+          "feature:code": [
+            "AK120",
+            "AK100"
+          ]
+        }
+      },
+      "source": "RBT",
+      "source-layer": "park_polygon",
+      "minzoom": 9,
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "nature_reserve",
+          "protected_area",
+          "national_park"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "fill-color": "rgba(227,235,227,1)",
+        "fill-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          0.8,
+          12,
+          0.5
+        ]
+      }
+    },
+    {
       "id": "glacier--iceShelf--fill",
       "type": "fill",
       "metadata": {
@@ -325,6 +377,58 @@
       }
     },
     {
+      "id": "park--golfCourse--fill",
+      "type": "fill",
+      "metadata": {
+        "feature:info": {
+          "feature:name": [
+            "Park",
+            "Golf Course"
+          ],
+          "feature:code": [
+            "AK120",
+            "AK100"
+          ]
+        }
+      },
+      "source": "RBT",
+      "source-layer": "park_polygon",
+      "minzoom": 9,
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "park",
+          "golf_course",
+          "recreation_ground"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "fill-color": "rgba(227,235,227,1)",
+        "fill-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          0.8,
+          12,
+          0.5
+        ]
+      }
+    },
+    {
       "id": "landAerodrome--surface",
       "type": "fill",
       "metadata": {
@@ -355,61 +459,6 @@
       ],
       "paint": {
         "fill-color": "rgba(242,242,242,1)"
-      }
-    },
-    {
-      "id": "park--golfCourse--fill",
-      "type": "fill",
-      "metadata": {
-        "feature:info": {
-          "feature:name": [
-            "Park",
-            "Golf Course"
-          ],
-          "feature:code": [
-            "AK120",
-            "AK100"
-          ]
-        }
-      },
-      "source": "RBT",
-      "source-layer": "park_polygon",
-      "minzoom": 9,
-      "filter": [
-        "match",
-        [
-          "get",
-          "subclass"
-        ],
-        [
-          "park",
-          "golf_course",
-          "recreation_ground",
-          "nature_reserve",
-          "protected_area",
-          "national_park"
-        ],
-        true,
-        false
-      ],
-      "layout": {
-        "visibility": "visible"
-      },
-      "paint": {
-        "fill-color": "rgba(227,235,227,1)",
-        "fill-opacity": [
-          "interpolate",
-          [
-            "linear"
-          ],
-          [
-            "zoom"
-          ],
-          9,
-          0.8,
-          12,
-          0.5
-        ]
       }
     },
     {
@@ -976,6 +1025,49 @@
       }
     },
     {
+      "id": "hillshade",
+      "type": "hillshade",
+      "source": "TERRAIN",
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "hillshade-illumination-direction": 315,
+        "hillshade-exaggeration": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          0.3,
+          6,
+          0.25,
+          12,
+          0.25,
+          15,
+          0
+        ],
+        "hillshade-shadow-color": "rgba(174,174,174,1)",
+        "hillshade-highlight-color": "rgba(255,255,255,1)",
+        "hillshade-accent-color": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          "rgba(0,0,0,1)",
+          15,
+          "rgba(0,0,0,0)"
+        ]
+      }
+    },
+    {
       "id": "waterway--perennial",
       "type": "line",
       "metadata": {
@@ -1235,47 +1327,6 @@
       }
     },
     {
-      "id": "hillshade",
-      "type": "hillshade",
-      "source": "TERRAIN",
-      "layout": {
-        "visibility": "visible"
-      },
-      "paint": {
-        "hillshade-illumination-direction": 315,
-        "hillshade-exaggeration": [
-          "interpolate",
-          [
-            "linear"
-          ],
-          [
-            "zoom"
-          ],
-          8,
-          0.3,
-          12,
-          0.5,
-          15,
-          0
-        ],
-        "hillshade-shadow-color": "rgba(174,174,174,1)",
-        "hillshade-highlight-color": "rgba(255,255,255,1)",
-        "hillshade-accent-color": [
-          "interpolate",
-          [
-            "linear"
-          ],
-          [
-            "zoom"
-          ],
-          12,
-          "rgba(0,0,0,1)",
-          15,
-          "rgba(0,0,0,0)"
-        ]
-      }
-    },
-    {
       "id": "inlandWaterbody--intermittent--fill",
       "type": "fill",
       "metadata": {
@@ -1401,6 +1452,53 @@
       ],
       "paint": {
         "fill-color": "rgba(255,255,255,1)"
+      }
+    },
+    {
+      "id": "pier--line",
+      "type": "line",
+      "metadata": {
+        "feature:info": {
+          "feature:name": "Shoreline Construction",
+          "feature:code": "BB081"
+        }
+      },
+      "source": "RBT",
+      "source-layer": "pier_line",
+      "minzoom": 15,
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "pier",
+          "breakwater",
+          "groyne"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "line-width": [
+          "interpolate",
+          [
+            "exponential",
+            1.3
+          ],
+          [
+            "zoom"
+          ],
+          15,
+          1,
+          18,
+          4
+        ],
+        "line-color": "rgba(255,255,255,1)"
       }
     },
     {
@@ -1986,7 +2084,7 @@
           "match",
           [
             "get",
-            "class"
+            "subtype"
           ],
           "education",
           "rgba(229,220,232,1)",
@@ -7766,7 +7864,9 @@
           "LCA",
           "VCT",
           "BRB",
-          "GRD"
+          "GRD",
+          "PLW",
+          "MLT"
         ],
         [
           "step",
@@ -7898,6 +7998,10 @@
           "BRB",
           false,
           "GRD",
+          false,
+          "PLW",
+          false,
+          "MLT",
           false,
           true
         ],
@@ -8796,7 +8900,7 @@
         ],
         "text-field": "{name}",
         "text-font": [
-          "NGATopo_Cn_ita",
+          "NGATopo_ita",
           "NotoSansItalic"
         ],
         "text-letter-spacing": 0.05,
@@ -8866,8 +8970,13 @@
             "unknown_wetland"
           ],
           "rgba(93,146,180,1)",
-          "sand",
+          [
+            "sand",
+            "beach"
+          ],
           "rgba(120,110,100,1)",
+          "reef",
+          "rgba(130,130,130,1)",
           "rgba(108,147,108,1)"
         ],
         "text-halo-color": "rgba(255,255,255,0.8)",
@@ -8958,7 +9067,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_ita",
+          "NGATopo_ita",
           "NotoSansItalic"
         ],
         "text-letter-spacing": 0.05,
@@ -9011,7 +9120,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-size": [
@@ -9187,9 +9296,9 @@
             "match",
             [
               "get",
-              "featurecla"
+              "desig_cd"
             ],
-            "ocean",
+            "OCN",
             0.1,
             0.05
           ],
@@ -9198,11 +9307,11 @@
             "match",
             [
               "get",
-              "featurecla"
+              "desig_cd"
             ],
-            "ocean",
+            "OCN",
             0.2,
-            "sea",
+            "SEA",
             0.15,
             0.05
           ]
@@ -9221,9 +9330,9 @@
             "match",
             [
               "get",
-              "featurecla"
+              "desig_cd"
             ],
-            "sea",
+            "SEA",
             10,
             9
           ],
@@ -9232,17 +9341,18 @@
             "match",
             [
               "get",
-              "featurecla"
+              "desig_cd"
             ],
             [
-              "ocean",
-              "sea"
+              "OCN",
+              "SEA"
             ],
             18,
             [
-              "gulf",
-              "bay",
-              "Lake"
+              "GULF",
+              "BAY",
+              "LK",
+              "LKI"
             ],
             16,
             14
@@ -9252,9 +9362,9 @@
           "match",
           [
             "get",
-            "featurecla"
+            "desig_cd"
           ],
-          "ocean",
+          "OCN",
           "uppercase",
           "none"
         ]
@@ -9484,7 +9594,7 @@
           "Dam"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-size": [
@@ -9524,7 +9634,7 @@
         "symbol-placement": "line",
         "text-field": "{name}",
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-size": [
@@ -9579,7 +9689,7 @@
       "layout": {
         "text-field": "{name}",
         "text-font": [
-          "NGATopo_Cn_ita",
+          "NGATopo_ita",
           "NotoSansItalic"
         ],
         "text-max-width": 4,
@@ -9626,7 +9736,7 @@
           "Lock gate"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-justify": "auto",
@@ -9716,7 +9826,7 @@
           "Lock gate"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-justify": "auto",
@@ -9808,7 +9918,7 @@
           "Lock"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-justify": "auto",
@@ -9869,7 +9979,7 @@
       },
       "source": "RBT",
       "source-layer": "park_polygon",
-      "minzoom": 13,
+      "minzoom": 17,
       "filter": [
         "match",
         [
@@ -9886,7 +9996,7 @@
           "name"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-letter-spacing": 0.05,
@@ -10030,7 +10140,7 @@
       "layout": {
         "text-field": "{name}",
         "text-font": [
-          "NGATopo_Cn_ita",
+          "NGATopo_ita",
           "NotoSansItalic"
         ],
         "text-letter-spacing": 0.05,
@@ -10221,10 +10331,10 @@
       "layout": {
         "text-field": "{name}",
         "text-font": [
-          "NGATopo_Cn_reg",
-          "NotoSansRegular"
+          "NGATopo_ita",
+          "NotoSansItalic"
         ],
-        "text-letter-spacing": 0.05,
+        "text-letter-spacing": 0.01,
         "text-max-width": 6,
         "text-size": [
           "interpolate",
@@ -10269,7 +10379,7 @@
         "match",
         [
           "get",
-          "class"
+          "subtype"
         ],
         [
           "education",
@@ -10306,7 +10416,7 @@
           "match",
           [
             "get",
-            "class"
+            "subtype"
           ],
           "education",
           "rgba(138, 99, 151, 1)",
@@ -10700,6 +10810,60 @@
       },
       "paint": {
         "text-color": "rgba(110,110,110,1)",
+        "text-halo-color": "rgba(255,255,255,0.8)",
+        "text-halo-width": 1.3
+      }
+    },
+    {
+      "id": "pier--label",
+      "type": "symbol",
+      "metadata": {
+        "feature:info": {
+          "feature:name": "Shoreline Construction",
+          "feature:code": "BB081"
+        }
+      },
+      "source": "RBT",
+      "source-layer": "pier_polygon",
+      "minzoom": 17,
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "pier",
+          "breakwater",
+          "groyne"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "text-field": "{name}",
+        "text-font": [
+          "NGATopo_reg",
+          "NotoSansRegular"
+        ],
+        "text-max-width": 6,
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          11,
+          16,
+          14
+        ],
+        "visibility": "visible"
+      },
+      "paint": {
+        "text-color": "rgba(130,130,130,1)",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.3
       }
@@ -11762,10 +11926,10 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
-        "text-letter-spacing": 0.05,
+        "text-letter-spacing": 0.01,
         "text-max-width": 6,
         "text-size": [
           "interpolate",
@@ -11811,7 +11975,7 @@
           "Railway Yard"
         ],
         "text-font": [
-          "NGATopo_Cn_ita",
+          "NGATopo_ita",
           "NotoSansItalic"
         ],
         "text-letter-spacing": 0.1,
@@ -12849,7 +13013,7 @@
           "Port"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-max-width": 6,
@@ -13012,7 +13176,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-max-width": 6,
@@ -13158,7 +13322,7 @@
           " pumping station"
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-max-width": 6,
@@ -13327,7 +13491,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-max-width": 6,
@@ -13451,7 +13615,7 @@
       "layout": {
         "text-field": "{name}",
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-max-width": 6,
@@ -13638,7 +13802,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-max-width": 6,
@@ -13710,7 +13874,7 @@
         "symbol-placement": "line-center",
         "text-field": "seaplane run",
         "text-font": [
-          "NGATopo_Cn_bld",
+          "NGATopo_bld",
           "NotoSansBold"
         ],
         "text-letter-spacing": 0.02,
@@ -13746,16 +13910,12 @@
       },
       "source": "RBT",
       "source-layer": "road_line",
-      "minzoom": 12,
+      "minzoom": 13,
       "filter": [
         "all",
         [
           "has",
           "ref"
-        ],
-        [
-          "has",
-          "ref_number"
         ],
         [
           "!",
@@ -13802,16 +13962,21 @@
         "icon-image": "routeMarker-sm-nonUSA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
-        "symbol-placement": "line",
-        "symbol-spacing": [
-          "step",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
           [
             "zoom"
           ],
-          250,
+          13,
+          48,
           15,
-          500
+          2
         ],
+        "symbol-placement": "line",
+        "symbol-spacing": 500,
         "text-field": "{ref}",
         "text-font": [
           "NGATopo_Cn_bld",
@@ -13858,10 +14023,6 @@
           "ref"
         ],
         [
-          "has",
-          "ref_number"
-        ],
-        [
           "match",
           [
             "get",
@@ -13903,16 +14064,21 @@
         "icon-image": "routeMarker-md-nonUSA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
-        "symbol-placement": "line",
-        "symbol-spacing": [
-          "step",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
           [
             "zoom"
           ],
-          250,
+          11,
+          48,
           15,
-          500
+          2
         ],
+        "symbol-placement": "line",
+        "symbol-spacing": 500,
         "text-field": "{ref}",
         "text-font": [
           "NGATopo_Cn_bld",
@@ -13959,10 +14125,6 @@
           "ref"
         ],
         [
-          "has",
-          "ref_number"
-        ],
-        [
           "match",
           [
             "get",
@@ -14007,16 +14169,21 @@
         "icon-image": "routeMarker-lg-nonUSA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
-        "symbol-placement": "line",
-        "symbol-spacing": [
-          "step",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
           [
             "zoom"
           ],
-          250,
+          11,
+          24,
           15,
-          500
+          2
         ],
+        "symbol-placement": "line",
+        "symbol-spacing": 500,
         "text-field": "{ref}",
         "text-font": [
           "NGATopo_Cn_bld",
@@ -14133,16 +14300,21 @@
         "icon-image": "routeMarker-sm-USA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
-        "symbol-placement": "line",
-        "symbol-spacing": [
-          "step",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
           [
             "zoom"
           ],
-          250,
+          6,
+          24,
           15,
-          500
+          2
         ],
+        "symbol-placement": "line",
+        "symbol-spacing": 500,
         "text-field": "{ref_number}",
         "text-font": [
           "NGATopo_Cn_bld",
@@ -14259,16 +14431,21 @@
         "icon-image": "routeMarker-md-USA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
-        "symbol-placement": "line",
-        "symbol-spacing": [
-          "step",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
           [
             "zoom"
           ],
-          250,
+          6,
+          24,
           15,
-          500
+          2
         ],
+        "symbol-placement": "line",
+        "symbol-spacing": 500,
         "text-field": "{ref_number}",
         "text-font": [
           "NGATopo_Cn_bld",
@@ -14386,15 +14563,7 @@
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
         "symbol-placement": "line",
-        "symbol-spacing": [
-          "step",
-          [
-            "zoom"
-          ],
-          250,
-          15,
-          500
-        ],
+        "symbol-spacing": 500,
         "text-field": "{ref_number}",
         "text-font": [
           "NGATopo_Cn_bld",
@@ -14552,7 +14721,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-justify": "auto",
@@ -14595,7 +14764,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "text-color": "rgba(130,130,130,1.0)",
+        "text-color": "rgba(130,130,130,1)",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.5
       }
@@ -14733,8 +14902,8 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_bld",
-          "NotoSansBold"
+          "NGATopo_reg",
+          "NotoSansRegular"
         ],
         "text-justify": "auto",
         "text-radial-offset": [
@@ -14776,7 +14945,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "text-color": "rgba(130,130,130,1.0)",
+        "text-color": "rgba(130,130,130,1)",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.5
       }
@@ -14930,7 +15099,7 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_reg",
+          "NGATopo_reg",
           "NotoSansRegular"
         ],
         "text-justify": "auto",
@@ -14973,7 +15142,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "text-color": "rgba(130,130,130,1.0)",
+        "text-color": "rgba(130,130,130,1)",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.5
       }
@@ -15200,7 +15369,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "text-color": "rgba(130,130,130,1.0)",
+        "text-color": "rgba(130,130,130,1)",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.5
       }
@@ -15427,7 +15596,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "text-color": "rgba(130,130,130,1.0)",
+        "text-color": "rgba(130,130,130,1)",
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.5
       }
@@ -15574,29 +15743,11 @@
             "iso_3"
           ],
           [
-            "PRI",
-            "LUX",
-            "LIE"
-          ],
-          false,
-          true
-        ],
-        12,
-        [
-          "match",
-          [
-            "get",
-            "iso_3"
-          ],
-          [
-            "PRI",
             "LUX",
             "LIE",
             "VGB",
             "SXM",
             "ATG",
-            "GLP",
-            "MTQ",
             "LCA",
             "VCT",
             "BRB",
@@ -15604,13 +15755,45 @@
             "DMA",
             "MSR",
             "KNA",
-            "VIR"
+            "VIR",
+            "PLW",
+            "MCO",
+            "MAC",
+            "HKG",
+            "MDV"
           ],
           false,
           true
         ],
         13,
-        true,
+        [
+          "match",
+          [
+            "get",
+            "iso_3"
+          ],
+          [
+            "MCO",
+            "MAC",
+            "HKG"
+          ],
+          false,
+          true
+        ],
+        14,
+        [
+          "match",
+          [
+            "get",
+            "iso_3"
+          ],
+          [
+            "MAC",
+            "HKG"
+          ],
+          false,
+          true
+        ],
         15,
         false
       ],
@@ -15646,21 +15829,6 @@
               "iso_3"
             ],
             [
-              "MEX",
-              "ARG",
-              "GBR",
-              "FRA",
-              "DEU",
-              "ESP",
-              "RUS",
-              "KAZ",
-              "UKR",
-              "MNG",
-              "BLR",
-              "POL"
-            ],
-            20,
-            [
               "CAN",
               "USA",
               "BRA",
@@ -15672,7 +15840,35 @@
             18
           ],
           13,
-          24
+          [
+            "match",
+            [
+              "get",
+              "iso_3"
+            ],
+            [
+              "MEX",
+              "ARG",
+              "GBR",
+              "FRA",
+              "DEU",
+              "ESP",
+              "RUS",
+              "KAZ",
+              "UKR",
+              "MNG",
+              "BLR",
+              "POL",
+              "CAN",
+              "USA",
+              "BRA",
+              "IND",
+              "CHN",
+              "AUS"
+            ],
+            24,
+            18
+          ]
         ]
       },
       "paint": {
@@ -15685,7 +15881,9 @@
           ],
           1,
           8,
-          1.5
+          1.5,
+          12,
+          2
         ]
       }
     },
@@ -16031,7 +16229,9 @@
           ],
           1,
           8,
-          1.5
+          1.5,
+          14,
+          2
         ]
       }
     },
@@ -16046,7 +16246,7 @@
       },
       "source": "RBT",
       "source-layer": "place_labels",
-      "minzoom": 7,
+      "minzoom": 5,
       "filter": [
         "all",
         [
@@ -16075,9 +16275,9 @@
             5,
             9,
             6,
-            10,
+            12,
             7,
-            11,
+            14,
             999
           ]
         ],
@@ -16093,14 +16293,14 @@
               "zoom"
             ],
             1,
-            15,
-            4,
-            16,
+            13,
             5,
-            17,
+            14,
             6,
+            15,
+            7,
             18,
-            7
+            8
           ]
         ]
       ],
@@ -16121,10 +16321,25 @@
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_ita",
+          "NGATopo_ita",
           "NotoSansItalic"
         ],
-        "text-letter-spacing": 0.05,
+        "text-letter-spacing": [
+          "step",
+          [
+            "get",
+            "rank"
+          ],
+          1,
+          3,
+          0.5,
+          4,
+          0.3,
+          5,
+          0.2,
+          6,
+          0.05
+        ],
         "text-max-width": 6,
         "text-size": [
           "interpolate",
@@ -16135,7 +16350,7 @@
           [
             "zoom"
           ],
-          7,
+          5,
           [
             "interpolate",
             [
@@ -16146,11 +16361,11 @@
               "rank"
             ],
             3,
-            11,
+            12,
             7,
             11
           ],
-          16,
+          14,
           [
             "interpolate",
             [
@@ -16169,12 +16384,14 @@
         "text-transform": [
           "step",
           [
-            "zoom"
+            "get",
+            "rank"
           ],
           "uppercase",
-          11,
+          6,
           "none"
         ],
+        "text-line-height": 1.5,
         "visibility": "visible"
       },
       "paint": {
@@ -16185,9 +16402,18 @@
           [
             "zoom"
           ],
-          1,
+          1.3,
           8,
-          1.5
+          [
+            "step",
+            [
+              "get",
+              "rank"
+            ],
+            1.5,
+            6,
+            1.3
+          ]
         ]
       }
     },
@@ -16558,7 +16784,7 @@
       "source": "RBT",
       "source-layer": "adm1_label",
       "minzoom": 3,
-      "maxzoom": 13,
+      "maxzoom": 14,
       "filter": [
         "step",
         [
@@ -16656,7 +16882,17 @@
             "MSR",
             "KNA",
             "VIR",
-            "ISR"
+            "ISR",
+            "PLW",
+            "BES",
+            "MLT",
+            "AND",
+            "SMR",
+            "TTO",
+            "JAM",
+            "CPV",
+            "MAC",
+            "HKG"
           ],
           false,
           true
@@ -16676,7 +16912,6 @@
             "SXM",
             "ATG",
             "GLP",
-            "MTQ",
             "LCA",
             "VCT",
             "BRB",
@@ -16684,7 +16919,12 @@
             "DMA",
             "MSR",
             "KNA",
-            "VIR"
+            "VIR",
+            "PLW",
+            "MLT",
+            "SMR",
+            "MAC",
+            "HKG"
           ],
           false,
           true
@@ -16699,7 +16939,9 @@
           [
             "PRI",
             "LUX",
-            "LIE"
+            "LIE",
+            "PLW",
+            "LCA"
           ],
           true,
           false
@@ -16712,14 +16954,11 @@
             "iso_3"
           ],
           [
-            "PRI",
             "LUX",
             "LIE",
             "VGB",
             "SXM",
             "ATG",
-            "GLP",
-            "MTQ",
             "LCA",
             "VCT",
             "BRB",
@@ -16727,7 +16966,37 @@
             "DMA",
             "MSR",
             "KNA",
-            "VIR"
+            "VIR",
+            "PLW",
+            "MLT",
+            "SMR"
+          ],
+          true,
+          false
+        ],
+        13,
+        [
+          "match",
+          [
+            "get",
+            "iso_3"
+          ],
+          [
+            "LUX",
+            "LIE",
+            "VGB",
+            "SXM",
+            "ATG",
+            "VCT",
+            "BRB",
+            "GRD",
+            "DMA",
+            "MSR",
+            "KNA",
+            "VIR",
+            "PLW",
+            "MLT",
+            "SMR"
           ],
           true,
           false
@@ -17072,6 +17341,21 @@
         ]
       ],
       "layout": {
+        "symbol-sort-key": [
+          "+",
+          [
+            "*",
+            [
+              "get",
+              "rank"
+            ],
+            10
+          ],
+          [
+            "get",
+            "class_rank"
+          ]
+        ],
         "icon-image": [
           "step",
           [
@@ -17545,15 +17829,30 @@
           ],
           [
             0,
-            2,
             3,
             5,
-            6,
             7,
             8
           ],
           true,
-          99,
+          6,
+          [
+            "case",
+            [
+              "==",
+              [
+                "get",
+                "gns_short_name"
+              ],
+              "Taiwan"
+            ],
+            true,
+            false
+          ],
+          [
+            2,
+            99
+          ],
           [
             "step",
             [
@@ -17587,7 +17886,7 @@
             ],
             1000000000
           ],
-          7,
+          6,
           [
             ">=",
             [
@@ -17689,7 +17988,7 @@
               "area"
             ],
             0.3,
-            20000000000,
+            60000000000,
             1,
             2000000000000,
             2
@@ -17714,9 +18013,9 @@
               "area"
             ],
             5,
-            20000000000,
+            60000000000,
             15,
-            2000000000000,
+            1000000000000,
             30
           ]
         ],
@@ -17730,7 +18029,18 @@
             "zoom"
           ],
           1,
-          10,
+          [
+            "step",
+            [
+              "get",
+              "area"
+            ],
+            7,
+            60000000000,
+            8,
+            1000000000000,
+            9
+          ],
           8,
           [
             "step",
@@ -17739,10 +18049,10 @@
               "area"
             ],
             16,
-            20000000000,
-            30,
-            2000000000000,
-            40
+            60000000000,
+            24,
+            1000000000000,
+            36
           ]
         ],
         "visibility": "visible"
@@ -17815,7 +18125,7 @@
               "get",
               "area"
             ],
-            50000000000
+            60000000000
           ],
           3,
           [
@@ -17911,9 +18221,9 @@
               "area"
             ],
             0.3,
-            20000000000,
+            60000000000,
             1,
-            2000000000000,
+            1000000000000,
             2
           ]
         ],
@@ -17935,10 +18245,10 @@
               "get",
               "area"
             ],
-            5,
-            20000000000,
+            1,
+            60000000000,
             15,
-            2000000000000,
+            1000000000000,
             30
           ]
         ],
@@ -17952,7 +18262,18 @@
             "zoom"
           ],
           1,
-          9,
+          [
+            "step",
+            [
+              "get",
+              "area"
+            ],
+            7,
+            60000000000,
+            8,
+            1000000000000,
+            9
+          ],
           8,
           [
             "step",
@@ -17961,10 +18282,10 @@
               "area"
             ],
             16,
-            20000000000,
-            30,
-            2000000000000,
-            40
+            60000000000,
+            24,
+            1000000000000,
+            36
           ]
         ],
         "text-line-height": [

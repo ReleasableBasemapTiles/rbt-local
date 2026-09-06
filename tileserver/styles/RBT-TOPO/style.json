@@ -2,7 +2,7 @@
   "version": 8,
   "name": "RBT-TOPO",
   "metadata": {
-    "rbt:version": "1.1.0",
+    "rbt:version": "2.0.0",
     "license:info": {
       "data:licence": "© OpenStreetMap contributor https://www.openstreetmap.org/copyright",
       "style:license": {
@@ -535,14 +535,16 @@
           [
             "zoom"
           ],
-          8,
+          4,
           0.3,
+          6,
+          0.25,
           12,
-          0.5,
+          0.25,
           15,
           0
         ],
-        "hillshade-shadow-color": "rgba(174,174,174,1)",
+        "hillshade-shadow-color": "rgba(51,51,51,1)",
         "hillshade-highlight-color": "rgba(255,255,255,1)",
         "hillshade-accent-color": [
           "interpolate",
@@ -1656,41 +1658,6 @@
       }
     },
     {
-      "id": "pier--fill",
-      "type": "fill",
-      "source": "RBT",
-      "source-layer": "pier_polygon",
-      "filter": [
-        "match",
-        [
-          "get",
-          "subclass"
-        ],
-        [
-          "pier",
-          "breakwater",
-          "groyne"
-        ],
-        true,
-        false
-      ],
-      "paint": {
-        "fill-color": [
-          "interpolate",
-          [
-            "linear"
-          ],
-          [
-            "zoom"
-          ],
-          10,
-          "rgba(240,238,233,1)",
-          12,
-          "rgba(232,228,222,1)"
-        ]
-      }
-    },
-    {
       "id": "wetland--fill--pattern",
       "type": "fill",
       "metadata": {
@@ -2124,6 +2091,107 @@
           2
         ],
         "line-width": 1
+      }
+    },
+    {
+      "id": "pier--fill",
+      "type": "fill",
+      "metadata": {
+        "feature:info": {
+          "feature:name": "Shoreline Construction",
+          "feature:code": "BB081"
+        }
+      },
+      "source": "RBT",
+      "source-layer": "pier_polygon",
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "pier",
+          "breakwater",
+          "groyne"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "fill-color": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          "rgba(240,238,233,1)",
+          12,
+          "rgba(232,228,222,1)"
+        ],
+        "fill-antialias": [
+          "step",
+          [
+            "zoom"
+          ],
+          false,
+          15,
+          true
+        ],
+        "fill-outline-color": "rgba(75,75,75,1)"
+      }
+    },
+    {
+      "id": "pier--line",
+      "type": "line",
+      "metadata": {
+        "feature:info": {
+          "feature:name": "Shoreline Construction",
+          "feature:code": "BB081"
+        }
+      },
+      "source": "RBT",
+      "source-layer": "pier_line",
+      "minzoom": 15,
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "pier",
+          "breakwater",
+          "groyne"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "line-width": [
+          "interpolate",
+          [
+            "exponential",
+            1.3
+          ],
+          [
+            "zoom"
+          ],
+          15,
+          0.6,
+          18,
+          1
+        ],
+        "line-color": "rgba(75,75,75,1)"
       }
     },
     {
@@ -15312,6 +15380,10 @@
           false,
           "GRD",
           false,
+          "PLW",
+          false,
+          "MLT",
+          false,
           true
         ],
         7,
@@ -19578,6 +19650,60 @@
       }
     },
     {
+      "id": "pier--label",
+      "type": "symbol",
+      "metadata": {
+        "feature:info": {
+          "feature:name": "Shoreline Construction",
+          "feature:code": "BB081"
+        }
+      },
+      "source": "RBT",
+      "source-layer": "pier_polygon",
+      "minzoom": 17,
+      "filter": [
+        "match",
+        [
+          "get",
+          "subclass"
+        ],
+        [
+          "pier",
+          "breakwater",
+          "groyne"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "text-field": "{name}",
+        "text-font": [
+          "NGATopo_Cn_reg",
+          "NotoSansRegular"
+        ],
+        "text-max-width": 6,
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          11,
+          16,
+          14
+        ],
+        "visibility": "visible"
+      },
+      "paint": {
+        "text-color": "rgba(0,0,0,1)",
+        "text-halo-color": "rgba(255,255,255,0.8)",
+        "text-halo-width": 1.3
+      }
+    },
+    {
       "id": "cemetery--icon--label",
       "type": "symbol",
       "metadata": {
@@ -22268,16 +22394,42 @@
       "source-layer": "utility_point",
       "minzoom": 9,
       "filter": [
-        "match",
+        "all",
         [
-          "get",
-          "subclass"
+          "match",
+          [
+            "get",
+            "subclass"
+          ],
+          "water_tower",
+          true,
+          false
         ],
         [
-          "water_tower"
-        ],
-        true,
-        false
+          "step",
+          [
+            "zoom"
+          ],
+          [
+            ">=",
+            [
+              "get",
+              "height"
+            ],
+            46
+          ],
+          11,
+          [
+            ">",
+            [
+              "get",
+              "height"
+            ],
+            0
+          ],
+          12,
+          true
+        ]
       ],
       "layout": {
         "icon-anchor": "bottom",
@@ -27246,6 +27398,19 @@
         "icon-image": "routeMarker-national-nonUSA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          48,
+          15,
+          2
+        ],
         "icon-text-fit-padding": [
           "interpolate",
           [
@@ -27383,6 +27548,19 @@
         "icon-image": "routeMarker-nationalMotorway-nonUSA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          48,
+          15,
+          2
+        ],
         "icon-text-fit-padding": [
           "interpolate",
           [
@@ -27517,6 +27695,19 @@
         "icon-image": "routeMarker-international",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          24,
+          15,
+          2
+        ],
         "icon-text-fit-padding": [
           "interpolate",
           [
@@ -27669,6 +27860,19 @@
         "icon-image": "routeMarker-local",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          24,
+          15,
+          2
+        ],
         "icon-text-fit-padding": [
           "interpolate",
           [
@@ -27820,6 +28024,19 @@
         "icon-image": "routeMarker-national-USA",
         "icon-rotation-alignment": "viewport",
         "icon-text-fit": "both",
+        "icon-padding": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          24,
+          15,
+          2
+        ],
         "icon-text-fit-padding": [
           "interpolate",
           [
@@ -28057,7 +28274,7 @@
       },
       "source": "RBT",
       "source-layer": "place_labels",
-      "minzoom": 7,
+      "minzoom": 5,
       "filter": [
         "all",
         [
@@ -28086,9 +28303,9 @@
             5,
             9,
             6,
-            10,
+            13,
             7,
-            11,
+            14,
             999
           ]
         ],
@@ -28104,14 +28321,14 @@
               "zoom"
             ],
             1,
-            15,
-            4,
-            16,
+            13,
             5,
-            17,
+            14,
             6,
+            15,
+            7,
             18,
-            7
+            8
           ]
         ]
       ],
@@ -28146,7 +28363,7 @@
           [
             "zoom"
           ],
-          7,
+          5,
           [
             "interpolate",
             [
@@ -28157,11 +28374,11 @@
               "rank"
             ],
             3,
-            11,
+            12,
             7,
             11
           ],
-          16,
+          14,
           [
             "interpolate",
             [
@@ -30362,29 +30579,11 @@
             "iso_3"
           ],
           [
-            "PRI",
-            "LUX",
-            "LIE"
-          ],
-          false,
-          true
-        ],
-        12,
-        [
-          "match",
-          [
-            "get",
-            "iso_3"
-          ],
-          [
-            "PRI",
             "LUX",
             "LIE",
             "VGB",
             "SXM",
             "ATG",
-            "GLP",
-            "MTQ",
             "LCA",
             "VCT",
             "BRB",
@@ -30392,12 +30591,27 @@
             "DMA",
             "MSR",
             "KNA",
-            "VIR"
+            "VIR",
+            "PLW",
+            "MCO"
           ],
           false,
           true
         ],
         13,
+        [
+          "match",
+          [
+            "get",
+            "iso_3"
+          ],
+          [
+            "MCO"
+          ],
+          false,
+          true
+        ],
+        14,
         true,
         15,
         false
@@ -30610,32 +30824,6 @@
                 false
               ]
             ],
-            11,
-            [
-              "all",
-              [
-                "==",
-                [
-                  "get",
-                  "rank"
-                ],
-                11
-              ],
-              [
-                "match",
-                [
-                  "get",
-                  "class"
-                ],
-                [
-                  "city",
-                  "town",
-                  "village"
-                ],
-                true,
-                false
-              ]
-            ],
             12,
             [
               "all",
@@ -30656,10 +30844,7 @@
                 [
                   "city",
                   "town",
-                  "village",
-                  "hamlet",
-                  "neighbourhood",
-                  "suburb"
+                  "village"
                 ],
                 true,
                 false
@@ -31137,7 +31322,7 @@
       "source": "RBT",
       "source-layer": "adm1_label",
       "minzoom": 3,
-      "maxzoom": 13,
+      "maxzoom": 14,
       "filter": [
         "step",
         [
@@ -31234,7 +31419,15 @@
             "MSR",
             "KNA",
             "VIR",
-            "ISR"
+            "ISR",
+            "PLW",
+            "BES",
+            "MLT",
+            "AND",
+            "SMR",
+            "TTO",
+            "JAM",
+            "CPV"
           ],
           false,
           true
@@ -31254,7 +31447,6 @@
             "SXM",
             "ATG",
             "GLP",
-            "MTQ",
             "LCA",
             "VCT",
             "BRB",
@@ -31262,7 +31454,10 @@
             "DMA",
             "MSR",
             "KNA",
-            "VIR"
+            "VIR",
+            "PLW",
+            "MLT",
+            "SMR"
           ],
           false,
           true
@@ -31277,7 +31472,9 @@
           [
             "PRI",
             "LUX",
-            "LIE"
+            "LIE",
+            "PLW",
+            "LCA"
           ],
           true,
           false
@@ -31290,14 +31487,11 @@
             "iso_3"
           ],
           [
-            "PRI",
             "LUX",
             "LIE",
             "VGB",
             "SXM",
             "ATG",
-            "GLP",
-            "MTQ",
             "LCA",
             "VCT",
             "BRB",
@@ -31305,7 +31499,37 @@
             "DMA",
             "MSR",
             "KNA",
-            "VIR"
+            "VIR",
+            "PLW",
+            "MLT",
+            "SMR"
+          ],
+          true,
+          false
+        ],
+        13,
+        [
+          "match",
+          [
+            "get",
+            "iso_3"
+          ],
+          [
+            "LUX",
+            "LIE",
+            "VGB",
+            "SXM",
+            "ATG",
+            "VCT",
+            "BRB",
+            "GRD",
+            "DMA",
+            "MSR",
+            "KNA",
+            "VIR",
+            "PLW",
+            "MLT",
+            "SMR"
           ],
           true,
           false
@@ -31741,6 +31965,21 @@
         ]
       ],
       "layout": {
+        "symbol-sort-key": [
+          "+",
+          [
+            "*",
+            [
+              "get",
+              "rank"
+            ],
+            10
+          ],
+          [
+            "get",
+            "class_rank"
+          ]
+        ],
         "icon-image": [
           "step",
           [
@@ -31758,7 +31997,6 @@
           8,
           ""
         ],
-        "symbol-avoid-edges": true,
         "text-field": [
           "coalesce",
           [
@@ -32161,7 +32399,8 @@
             ],
             [
               1,
-              2
+              2,
+              99
             ],
             false,
             true
