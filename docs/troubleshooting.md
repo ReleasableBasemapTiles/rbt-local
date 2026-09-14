@@ -99,6 +99,17 @@ Docker Desktop uses the WSL2 platform's shared utility VM for its engine on Wind
 - **A reboot prompt appeared during `-Init` / `choco install docker-desktop` / `wsl --install`**: This is expected the first time either the WSL2 platform or Docker Desktop is installed. Restart Windows, then re-run the same `deploy.ps1` command (or the manual step you were on) -- already-installed prerequisites are detected and skipped.
 - **`docker` commands fail with a permissions/access-denied error immediately after installing Docker Desktop**: You were added to the local `docker-users` group as part of the install, but Windows only applies new group membership to new sign-ins. Log out and back in (or reboot), then try again.
 
+## EPSG:4326 Tiles Are Offset by Tens of Kilometers (Worse Away From the Equator)
+
+This affects the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../docker-compose.4087.yaml)). EPSG:4087 is registered under EPSG's *ellipsoidal* Equidistant Cylindrical method (1028), but PROJ versions before 9.8.0 always applied the *spherical* formula (1029) regardless ([OSGeo/PROJ#4654](https://github.com/OSGeo/PROJ/issues/4654), fixed in [#4656](https://github.com/OSGeo/PROJ/pull/4656)). The upstream `mapproxy:7.0.0-nginx` image bundles pyproj 3.7.2 (PROJ 9.5.1), which predates that fix -- tiles reprojected from the EPSG:4087 caches into EPSG:4326 land north of where they should, by an amount that grows with latitude (roughly 23km around 38°N, near zero at the equator).
+
+- **Solution**: [mapproxy/Dockerfile](../mapproxy/Dockerfile) upgrades pyproj to 3.8.0 (PROJ 9.8.1) on top of the upstream image, and `docker-compose.yaml`/`docker-compose.4087.yaml` build it locally instead of pulling the image directly. Confirm the running container has it:
+
+  ```bash
+  docker exec mapproxy python -c "import pyproj; print(pyproj.proj_version_str)"
+  # expect: 9.8.1 (or newer) -- 9.5.1 means the upstream image is still in use, not the local build
+  ```
+
 ## Where to Get Help
 
 - Check the sections above, and [Connecting GIS Clients to RBT](gis-clients.md#troubleshooting-gis-client-connections) if the issue is specific to a GIS client connection

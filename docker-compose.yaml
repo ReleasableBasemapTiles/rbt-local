@@ -12,7 +12,13 @@ services:
     # fronted by our own optional nginx service (see
     # docker-compose.override.yaml) and/or published directly below for an
     # external proxy (e.g. AWS ALB) to use.
-    image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
+    #
+    # Built locally (see mapproxy/Dockerfile) rather than using
+    # ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx directly -- that image
+    # bundles a PROJ version old enough to place EPSG:4087-reprojected
+    # tiles incorrectly (see the Dockerfile's comment).
+    build: ./mapproxy
+    image: rbt-local/mapproxy:7.0.0-nginx
     container_name: mapproxy
     command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
     environment:
