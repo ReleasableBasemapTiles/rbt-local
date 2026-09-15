@@ -1,0 +1,69 @@
+RBT ({{ if .Values.tileservers.epsg4087.enabled }}EPSG:4087 dual-TileserverGL{{ else }}single-TileserverGL{{ end }}, no nginx) has been installed as
+release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Check rollout status:
+  oc rollout status deployment/{{ include "rbt.fullname" . }}-mapproxy -n {{ .Release.Namespace }}
+  oc rollout status deployment/{{ include "rbt.fullname" . }}-epsg3857 -n {{ .Release.Namespace }}
+{{- if .Values.tileservers.epsg4087.enabled }}
+  oc rollout status deployment/{{ include "rbt.fullname" . }}-epsg4087 -n {{ .Release.Namespace }}
+{{- end }}
+
+The first rollout can take a while -- the fetch-mbtiles init container on
+each TileserverGL pod downloads RBT.mbtiles/TERRAIN.mbtiles from S3 before
+the main container even starts (`oc logs -f <pod> -c fetch-mbtiles -n {{ .Release.Namespace }}`
+to watch progress).
+
+{{- if .Values.mapproxy.route.enabled }}
+
+MapProxy WMTS capabilities (once the Route is admitted -- can take a
+minute for the router to pick it up):
+{{- if .Values.mapproxy.route.host }}
+  https://{{ .Values.mapproxy.route.host }}/wmts/1.0.0/WMTSCapabilities.xml
+{{- else }}
+  https://$(oc get route {{ include "rbt.fullname" . }}-mapproxy -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')/wmts/1.0.0/WMTSCapabilities.xml
+{{- end }}
+{{- else }}
+
+mapproxy.route.enabled=false -- MapProxy is only reachable in-cluster, at
+http://{{ include "rbt.fullname" . }}-mapproxy.{{ .Release.Namespace }}.svc:{{ .Values.mapproxy.service.port }}/.
+{{- end }}
+
+{{- if .Values.tileservers.epsg3857.route.enabled }}
+
+TileserverGL (EPSG:3857) style previews:
+{{- if .Values.tileservers.epsg3857.route.host }}
+  https://{{ .Values.tileservers.epsg3857.route.host }}/
+{{- else }}
+  https://$(oc get route {{ include "rbt.fullname" . }}-epsg3857 -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')/
+{{- end }}
+{{- end }}
+
+{{- if .Values.tileservers.epsg4087.enabled }}
+{{- if .Values.tileservers.epsg4087.route.enabled }}
+
+TileserverGL (EPSG:4087) style previews:
+{{- if .Values.tileservers.epsg4087.route.host }}
+  https://{{ .Values.tileservers.epsg4087.route.host }}/
+{{- else }}
+  https://$(oc get route {{ include "rbt.fullname" . }}-epsg4087 -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')/
+{{- end }}
+{{- else }}
+
+The EPSG:4087 TileserverGL instance is internal-only (tileservers.epsg4087.route.enabled=false) --
+MapProxy's EPSG:4326 layers reproject from it directly inside the
+cluster; see docs/deployment-openshift.md.
+{{- end }}
+{{- end }}
+
+Confirm MapProxy actually loaded the config you expect -- same
+silent-fallback failure mode as the Compose deployment (see
+docs/deployment-4087.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged):
+  oc exec deploy/{{ include "rbt.fullname" . }}-mapproxy -n {{ .Release.Namespace }} -- head -1 /mapproxy/config/mapproxy.yaml
+{{- if .Values.tileservers.epsg4087.enabled }}
+  # expect: "# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its"
+{{- else }}
+  # expect: "services:" (tileservers.epsg4087.enabled=false uses the plain mapproxy.yaml)
+{{- end }}
+
+Run the chart's connection test (fetches WMTS capabilities from mapproxy in-cluster):
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

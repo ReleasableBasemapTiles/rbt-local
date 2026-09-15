@@ -1,0 +1,30 @@
+{{- if .Values.mapproxy.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "rbt.fullname" . }}-mapproxy
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mapproxy
+  annotations:
+    # HAProxy's default 30s timeout can cut off a cold-cache tile render --
+    # MapProxy renders synchronously on a cache miss, and a
+    # meta_size/meta_buffer-driven render (see mapproxy.yaml's
+    # globals.cache) can take longer than that under load.
+    haproxy.router.openshift.io/timeout: {{ .Values.mapproxy.route.timeout | quote }}
+    {{- with .Values.mapproxy.route.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- if .Values.mapproxy.route.host }}
+  host: {{ .Values.mapproxy.route.host }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "rbt.fullname" . }}-mapproxy
+  port:
+    targetPort: http
+  tls:
+    termination: {{ .Values.mapproxy.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.mapproxy.route.tls.insecureEdgeTerminationPolicy }}
+{{- end }}

@@ -1,0 +1,47 @@
+{{/*
+Off by default (networkPolicy.enabled=false) -- this is a starting point,
+not a hardened default, and has one known gap worth understanding before
+turning it on: OpenShift Routes deliver traffic to pods as ordinary
+ingress from the cluster's router, not from a pod this policy can
+reliably `podSelector`-match across every OpenShift install (the router
+namespace's labels aren't a stable, version-independent API). Rather than
+guess at those labels, the rule below just allows the Route-exposed ports
+(mapproxy, plus any tileserver with route.enabled) from any source --
+those are already meant to be publicly reachable via their Route, so this
+doesn't weaken anything. What it does add: every *other* port (e.g. the
+EPSG:4087 tileserver's, route-disabled by default) becomes reachable only
+from this release's own pods, not from arbitrary pods elsewhere in the
+namespace/cluster.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "rbt.fullname" . }}
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "rbt.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # mapproxy -> tileservergl(4087), and any other traffic between this
+    # release's own pods.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "rbt.selectorLabels" . | nindent 14 }}
+    - ports:
+        - port: {{ .Values.mapproxy.containerPort }}
+          protocol: TCP
+        {{- if .Values.tileservers.epsg3857.route.enabled }}
+        - port: {{ .Values.tileservers.epsg3857.containerPort }}
+          protocol: TCP
+        {{- end }}
+        {{- if .Values.tileservers.epsg4087.route.enabled }}
+        - port: {{ .Values.tileservers.epsg4087.containerPort }}
+          protocol: TCP
+        {{- end }}
+{{- end }}
