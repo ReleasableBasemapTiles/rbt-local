@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rbt.fullname" . }}-mapproxy
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mapproxy
+spec:
+  replicas: {{ .Values.mapproxy.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "rbt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mapproxy
+  template:
+    metadata:
+      labels:
+        {{- include "rbt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mapproxy
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mapproxy
+          image: "{{ .Values.mapproxy.image.repository }}:{{ .Values.mapproxy.image.tag }}"
+          imagePullPolicy: {{ .Values.mapproxy.image.pullPolicy }}
+          # The mapproxy image's Dockerfile sets no ENTRYPOINT, only a CMD
+          # (the "-nginx" tag's is `["./run-nginx.sh"]`) -- so, unlike the
+          # TileserverGL containers below, Compose's `command:` here
+          # overrides that empty-ENTRYPOINT+CMD pair directly, and maps
+          # 1:1 onto Kubernetes' "command" field rather than "args".
+          command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
+          env:
+            - name: HOME
+              value: /tmp
+            - name: UWSGI_PROCESSES
+              value: {{ .Values.mapproxy.uwsgi.processes | quote }}
+            - name: UWSGI_THREADS
+              value: {{ .Values.mapproxy.uwsgi.threads | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mapproxy.containerPort }}
+              protocol: TCP
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: mapproxy-config
+              mountPath: /mapproxy/config
+              readOnly: true
+            - name: cache
+              mountPath: /data
+              subPath: data
+            - name: cache
+              mountPath: /locks
+              subPath: locks
+            - name: cache
+              mountPath: /tile_locks
+              subPath: tile_locks
+            - name: dshm
+              mountPath: /dev/shm
+          # Matches docker-compose.4087.yaml's healthcheck, which opens a
+          # raw TCP connection to uwsgi's http-socket rather than issuing
+          # an HTTP request.
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 12
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.mapproxy.resources | nindent 12 }}
+      volumes:
+        - name: mapproxy-config
+          configMap:
+            name: {{ include "rbt.fullname" . }}-mapproxy-config
+        # Ephemeral tile cache -- rebuilds from the TileserverGL sources on
+        # every pod restart. Swap for a PVC (with `strategy: RollingUpdate`
+        # changed to `Recreate` if it's ReadWriteOnce) if you'd rather the
+        # cache survive restarts; see charts/rbt/README.md.
+        - name: cache
+          emptyDir: {}
+        # docker-compose.4087.yaml's `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.mapproxy.shm.sizeLimit }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

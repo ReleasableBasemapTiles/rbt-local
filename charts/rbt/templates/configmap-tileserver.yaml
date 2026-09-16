@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rbt.fullname" . }}-tileserver-config
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+data:
+  # Shared by both TileserverGL instances -- config.json's mbtiles/fonts/
+  # styles paths are relative to this file's own directory (see
+  # docker-compose.4087.yaml's comment on the tileservergl4087 service),
+  # so the same config.json works for both as long as each instance mounts
+  # its own mbtiles at /data (see templates/_tileserver.tpl).
+  config.json: |
+{{ .Files.Get "files/tileserver/config.json" | indent 4 }}
+  fetch-mbtiles.sh: |
+{{ .Files.Get "files/scripts/fetch-mbtiles.sh" | indent 4 }}

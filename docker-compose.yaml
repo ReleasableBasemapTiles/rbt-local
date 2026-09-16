@@ -1,18 +1,17 @@
 services:
   mapproxy:
-    # uwsgi is only installed in the "nginx" build stage of mapproxy's
-    # Dockerfiles (`pip install uwsgi`), so the "-nginx" tags are the only
-    # upstream variants that have it -- plain "7.0.0" and "-dev" do not.
-    # We use the Debian "-nginx" tag over "-alpine-nginx" (which also has
-    # uwsgi): alpine only saves ~60MiB of a ~400MiB image, has no bash for
-    # the healthcheck below, and musl's 128KB default thread stack and
-    # slower multi-threaded allocator are a poor fit for uwsgi threads
-    # running GDAL/PROJ. We don't use the image's bundled nginx or
-    # run-nginx.sh -- we run uwsgi directly instead of the default CMD,
-    # fronted by our own optional nginx service (see
-    # docker-compose.override.yaml) and/or published directly below for an
-    # external proxy (e.g. AWS ALB) to use.
-    image: ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx
+    # Built locally from Dockerfile.mapproxy: Python 3.14 + conda-forge
+    # GDAL/PROJ >= 9.8 (ellipsoidal EPSG:4087) + MapProxy 7 + uwsgi.
+    # Replaces ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx, whose
+    # Debian Bookworm PROJ 9.1.1 still uses spherical eqc. We run uwsgi
+    # directly (this image has no nginx), fronted by our optional nginx
+    # service (see docker-compose.override.yaml) and/or published below
+    # for an external proxy (e.g. AWS ALB).
+    build:
+      context: .
+      dockerfile: Dockerfile.mapproxy
+    image: rbt-mapproxy:7.0.0
+    pull_policy: build
     container_name: mapproxy
     command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
     environment:

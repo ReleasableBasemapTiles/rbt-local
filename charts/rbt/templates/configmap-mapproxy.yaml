@@ -1,0 +1,42 @@
+{{/*
+mapproxy.yaml (or mapproxy.4087.yaml, if tileservers.epsg4087.enabled --
+see values.yaml's comment on tileservers) hardcodes its TileserverGL
+source URLs as http://tileservergl:8080/... and
+http://tileservergl4087:8080/..., the exact hostnames+ports
+docker-compose.4087.yaml's container_names/ports give those two services.
+Since this chart's Services are named/ported from
+tileservers.epsg3857.serviceName/containerPort and
+tileservers.epsg4087.serviceName/containerPort instead (configurable, so
+they don't collide with another rbt release in the same namespace), the
+copy of that YAML embedded below has both hardcoded origins rewritten to
+match whatever those are actually set to. mapproxy.yaml (the non-4087
+file) never contains an "http://tileservergl4087:8080" substring, so
+running both replacements unconditionally is harmless regardless of which
+file was selected.
+*/}}
+{{- $mapproxyYaml := .Files.Get (ternary "files/mapproxy/mapproxy.4087.yaml" "files/mapproxy/mapproxy.yaml" .Values.tileservers.epsg4087.enabled) }}
+{{- $epsg3857 := .Values.tileservers.epsg3857 }}
+{{- $epsg4087 := .Values.tileservers.epsg4087 }}
+{{- $mapproxyYaml = $mapproxyYaml | replace "http://tileservergl4087:8080" (printf "http://%s:%v" $epsg4087.serviceName $epsg4087.containerPort) }}
+{{- $mapproxyYaml = $mapproxyYaml | replace "http://tileservergl:8080" (printf "http://%s:%v" $epsg3857.serviceName $epsg3857.containerPort) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rbt.fullname" . }}-mapproxy-config
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mapproxy
+data:
+  # The image's /mapproxy/app.py hardcodes
+  # make_wsgi_app('/mapproxy/config/mapproxy.yaml') with no env var or CLI
+  # flag to point it elsewhere, so this key's name must stay exactly
+  # "mapproxy.yaml" regardless of which source file it was rendered from --
+  # see deployment-mapproxy.yaml, which mounts this whole ConfigMap at
+  # /mapproxy/config, and docs/deployment-4087.md for what silently
+  # loading the wrong file looks like.
+  mapproxy.yaml: |
+{{ $mapproxyYaml | indent 4 }}
+  uwsgi.ini: |
+{{ .Files.Get "files/mapproxy/uwsgi.ini" | indent 4 }}
+  logging.ini: |
+{{ .Files.Get "files/mapproxy/logging.ini" | indent 4 }}

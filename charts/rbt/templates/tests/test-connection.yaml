@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "rbt.fullname" . }}-test-connection
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: wmts-capabilities
+      image: "{{ .Values.testImage.repository }}:{{ .Values.testImage.tag }}"
+      imagePullPolicy: {{ .Values.testImage.pullPolicy }}
+      securityContext:
+        {{- toYaml .Values.containerSecurityContext | nindent 8 }}
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          url="http://{{ include "rbt.fullname" . }}-mapproxy:{{ .Values.mapproxy.service.port }}/wmts/1.0.0/WMTSCapabilities.xml"
+          echo "GET $url"
+          wget -qO- --tries=5 --timeout=10 "$url" | head -5

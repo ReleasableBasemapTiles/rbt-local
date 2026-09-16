@@ -1,0 +1,227 @@
+# Default values for the rbt chart.
+#
+# This deploys the same three containers as docker-compose.4087.yaml run
+# with `docker compose -f docker-compose.4087.yaml up -d` (no nginx --
+# docker-compose.override.yaml is never part of this chart): MapProxy plus
+# two TileserverGL instances (EPSG:3857 and EPSG:4087). See
+# docs/deployment-openshift.md and charts/rbt/README.md for the full
+# picture, including why some values below (serviceName, PVC sizes, S3
+# URIs) have no safe generic default and must be set per-environment.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Required to pull this repo's private GHCR images (mapproxy, and the
+# assets image once it is also published here). Create a pull secret
+# from a GitHub PAT with `read:packages` and set it here.
+imagePullSecrets: []
+
+commonLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Applied to every Pod/container this chart creates (MapProxy, both
+# TileserverGL instances, and their init containers). Deliberately omits
+# runAsUser/fsGroup -- OpenShift's restricted-v2 SCC injects both from the
+# namespace's allocated range, and injects them *before* the runAsNonRoot
+# check runs, so this is safe even for images (like the aws-cli image
+# below) that default to root. Vanilla Kubernetes has no such SCC, so
+# clusters without one must set containerSecurityContext.runAsUser (and,
+# for the mapproxy/tileserver-gl images specifically, a numeric UID -- see
+# charts/rbt/README.md#vanilla-kubernetes-without-an-scc).
+podSecurityContext:
+  runAsNonRoot: true
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
+# MapProxy -- the WMS/WMTS entry point. Image is built by
+# .github/workflows/mapproxy-image.yml (PROJ >= 9.8, ellipsoidal EPSG:4087)
+# and pushed to this repo's GHCR. Compose still builds the same
+# Dockerfile locally; Helm pulls the published image.
+# ---------------------------------------------------------------------------
+mapproxy:
+  image:
+    repository: ghcr.io/releasablebasemaptile/rbt-local/mapproxy
+    tag: 7.0.0
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  containerPort: 5000
+  uwsgi:
+    processes: 8
+    threads: 4
+  # emptyDir-backed /dev/shm -- matches docker-compose.4087.yaml's
+  # `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
+  shm:
+    sizeLimit: 2Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      memory: 6Gi
+  service:
+    port: 5000
+    type: ClusterIP
+  route:
+    enabled: true
+    # Leave blank to let OpenShift generate a host from the Route name and
+    # the cluster's default ingress domain.
+    host: ""
+    # HAProxy's default 30s timeout can cut off a cold-cache tile render
+    # (MapProxy synchronously renders on a cache miss) -- see
+    # docs/deployment-openshift.md.
+    timeout: 120s
+    annotations: {}
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+# ---------------------------------------------------------------------------
+# TileserverGL -- shared image/tag for both instances below (they only
+# differ in which mbtiles they mount and whether they're Route-exposed).
+# ---------------------------------------------------------------------------
+tileserverImage:
+  repository: maptiler/tileserver-gl
+  tag: v5.7.0-pre.1
+  pullPolicy: IfNotPresent
+
+# fonts/ and styles/ (114MB + 5MB of binary assets -- too large and too
+# binary for a ConfigMap) are baked into this image by ../../Dockerfile.assets
+# and copied into a shared emptyDir by an init container at pod startup. See
+# charts/rbt/README.md#assets-image for how to build and publish it -- there
+# is no public default, so this MUST be set before installing the chart.
+assets:
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+
+# Two TileserverGL Deployments, one per projection -- see
+# docs/deployment-4087.md for why EPSG:4087 improves EPSG:4326 output.
+# serviceName defaults to the exact container_name docker-compose.4087.yaml
+# uses; mapproxy's own ConfigMap (see templates/configmap-mapproxy.yaml)
+# rewrites mapproxy.yaml/mapproxy.4087.yaml's hardcoded
+# `http://tileservergl(4087)?:8080` source URLs to whatever these are set
+# to, so change them here rather than editing that YAML by hand.
+tileservers:
+  epsg3857:
+    enabled: true
+    serviceName: tileservergl
+    containerPort: 8080
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        memory: 4Gi
+    shm:
+      sizeLimit: 2Gi
+    persistence:
+      # Ask the RBT team for current RBT.mbtiles/TERRAIN.mbtiles sizes (see
+      # the main README's "Get S3 Credentials" section) and size this
+      # accordingly -- the datasets are updated periodically, so this
+      # default is a starting point, not a measured figure.
+      size: 200Gi
+      storageClassName: ""
+      accessModes:
+        - ReadWriteOnce
+      # Set to reuse a PVC populated out-of-band instead of the init
+      # container S3 download below (leave s3.rbtUri/terrainUri blank too).
+      existingClaim: ""
+    s3:
+      # s3://bucket[/prefix], no filename -- e.g. "s3://my-bucket/exports".
+      # Mirrors deploy.sh's S3_BUCKET_RBT/S3_BUCKET_TERRAIN.
+      rbtUri: ""
+      terrainUri: ""
+    route:
+      enabled: true
+      host: ""
+      # Passed to tileserver-gl as `--public_url` so TileJSON/style URLs
+      # it returns carry this Route's hostname instead of the pod's
+      # ClusterIP-internal one. Leave blank to let tileserver-gl derive it
+      # from request headers instead (fine for most GIS clients, but see
+      # https://tileserver.readthedocs.io/en/stable/deployment.html).
+      publicUrl: ""
+      annotations: {}
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+  epsg4087:
+    enabled: true
+    serviceName: tileservergl4087
+    containerPort: 8080
+    resources:
+      requests:
+        cpu: 250m
+        memory: 1Gi
+      limits:
+        memory: 4Gi
+    shm:
+      sizeLimit: 2Gi
+    persistence:
+      size: 200Gi
+      storageClassName: ""
+      accessModes:
+        - ReadWriteOnce
+      existingClaim: ""
+    s3:
+      rbtUri: ""
+      terrainUri: ""
+    # Internal only by default -- MapProxy is the only consumer of this
+    # instance's tiles (its EPSG:4326 caches reproject from them). Flip to
+    # true if you also want to browse its style previews directly, the way
+    # docker-compose.override.yaml's nginx exposes `/tileservergl4087/`.
+    route:
+      enabled: false
+      host: ""
+      publicUrl: ""
+      annotations: {}
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+
+# ---------------------------------------------------------------------------
+# S3 credentials for the mbtiles-fetching init containers (see
+# charts/rbt/files/scripts/fetch-mbtiles.sh). Ignored entirely for a
+# tileserver instance whose persistence.existingClaim is set.
+# ---------------------------------------------------------------------------
+s3:
+  # Name of a pre-existing Secret with access-key-id/secret-access-key
+  # keys, instead of templating one from accessKeyId/secretAccessKey below.
+  existingSecret: ""
+  accessKeyId: ""
+  secretAccessKey: ""
+  region: us-east-1
+  # Only needed for an S3-compatible store other than AWS S3 itself.
+  endpointUrl: ""
+
+mbtiles:
+  awsCliImage:
+    repository: public.ecr.aws/aws-cli/aws-cli
+    tag: "2.36.43"
+    pullPolicy: IfNotPresent
+  # Mirrors deploy.sh's --force: re-download RBT.mbtiles/TERRAIN.mbtiles
+  # even if already present in the PVC, instead of only re-downloading
+  # RBT.mbtiles when the S3 object is newer.
+  force: false
+
+networkPolicy:
+  # Off by default -- see templates/networkpolicy.yaml's comments on what
+  # it does and does not cover before enabling it.
+  enabled: false
+
+# Small image used only by the optional `helm test` connection check (see
+# templates/tests/test-connection.yaml).
+testImage:
+  repository: busybox
+  tag: "1.36"
+  pullPolicy: IfNotPresent

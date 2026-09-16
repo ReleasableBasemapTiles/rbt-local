@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rbt.fullname" . }}-mapproxy
+  labels:
+    {{- include "rbt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mapproxy
+spec:
+  type: {{ .Values.mapproxy.service.type }}
+  selector:
+    {{- include "rbt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mapproxy
+  ports:
+    - name: http
+      port: {{ .Values.mapproxy.service.port }}
+      targetPort: http

@@ -57,7 +57,7 @@ Prefer to see, or run, each step by hand instead of via the script? See [Install
 
 ## Deployment Options
 
-This repository's three Compose files combine into four deployments. All four publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326 -- so what differs is whether a local nginx fronts the services, and which projection the EPSG:4326 tiles are reprojected from. The diagrams below show default ports; every port is configurable in `.env` (see [.env.example](.env.example)). Options 3 and 4 name `docker-compose.4087.yaml` with an explicit `-f` instead of relying on the auto-discovered `docker-compose.yaml`, so `docker compose ps`/`logs`/`down` need those same `-f` flags -- `./deploy.sh`'s and `.\deploy.ps1`'s closing hints print the exact command for whichever stack you just deployed.
+This repository's three Compose files combine into four Docker Compose deployments, plus a fifth, Helm-based option for Kubernetes/OpenShift. All five publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326 -- so what differs is whether a local nginx fronts the services, and which projection the EPSG:4326 tiles are reprojected from. The diagrams below show default ports; every port is configurable in `.env` (see [.env.example](.env.example)). Options 3 and 4 name `docker-compose.4087.yaml` with an explicit `-f` instead of relying on the auto-discovered `docker-compose.yaml`, so `docker compose ps`/`logs`/`down` need those same `-f` flags -- `./deploy.sh`'s and `.\deploy.ps1`'s closing hints print the exact command for whichever stack you just deployed.
 
 ### 1. Default: nginx in front of both services
 
@@ -169,6 +169,10 @@ flowchart LR
   tileservergl4087 --- shared
 ```
 
+### 5. OpenShift/Kubernetes via Helm
+
+The four deployments above all run on a single Docker host via Compose. [`charts/rbt`](charts/rbt) is a Helm chart that deploys the same containers as option 4 (EPSG:4087 dual-TileserverGL, no nginx) to a Kubernetes/OpenShift cluster instead, with `RBT.mbtiles`/`TERRAIN.mbtiles` downloaded into PVCs and `tileserver/fonts`/`tileserver/styles` packaged into an image by [Dockerfile.assets](Dockerfile.assets) rather than bind-mounted. See [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md).
+
 ## Verifying It's Working
 
 See [Verifying Your Installation](docs/verify.md) for a full checklist. The short version:
@@ -203,6 +207,7 @@ Something not working? See [Troubleshooting](docs/troubleshooting.md) for common
 - [Connecting GIS Clients to RBT](docs/gis-clients.md)
 - [Advanced: Deploying Without nginx](docs/advanced-deployment.md) -- for AWS ALB/CloudFront deployments
 - [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md) -- a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output
+- [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md) -- the same stack as option 4 above, deployed to Kubernetes/OpenShift with `charts/rbt` instead of Compose
 - [Troubleshooting](docs/troubleshooting.md)
 
 ## Glossary of Terms

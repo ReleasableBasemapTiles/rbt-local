@@ -533,8 +533,11 @@ deploy_stack() {
     log "Deploying without nginx -- mapproxy and tileservergl publish their own ports directly"
   fi
 
-  log "Pulling images"
-  "${SUDO[@]}" docker compose "${compose_files[@]}" pull
+  log "Building the mapproxy image"
+  "${SUDO[@]}" docker compose "${compose_files[@]}" build mapproxy
+
+  log "Pulling remaining images"
+  "${SUDO[@]}" docker compose "${compose_files[@]}" pull --ignore-buildable
 
   log "Starting the RBT stack"
   "${SUDO[@]}" docker compose "${compose_files[@]}" up -d

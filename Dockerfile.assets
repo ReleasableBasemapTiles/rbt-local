@@ -1,0 +1,48 @@
+# Packages tileserver/fonts and tileserver/styles -- 114MB and 5MB of
+# static, mostly binary assets (font binaries, sprite PNGs) that are too
+# large and the wrong shape for a Kubernetes ConfigMap -- into a minimal
+# image. charts/rbt's TileserverGL Deployments (see
+# charts/rbt/templates/_tileserver.tpl) run this image as an init
+# container that copies /assets/* into a shared emptyDir at pod startup,
+# rather than mounting it directly, so both the EPSG:3857 and EPSG:4087
+# TileserverGL instances can share one build of this image the same way
+# they already share tileserver/fonts and tileserver/styles on disk in the
+# Docker Compose deployment (see docker-compose.4087.yaml).
+#
+# Build from the repo root (this Dockerfile needs that as its context to
+# reach tileserver/fonts and tileserver/styles), then push somewhere the
+# cluster can pull from and point the chart at it:
+#
+#   docker build -f Dockerfile.assets -t <registry>/<repo>/rbt-assets:<tag> .
+#   docker push <registry>/<repo>/rbt-assets:<tag>
+#   helm upgrade --install rbt charts/rbt \
+#     --set assets.image.repository=<registry>/<repo>/rbt-assets \
+#     --set assets.image.tag=<tag>
+#
+# Rebuild and push a new tag whenever tileserver/fonts or tileserver/styles
+# change -- there is no automation in this repo that does this for you.
+FROM alpine:3.20
+
+COPY tileserver/fonts /assets/fonts
+COPY tileserver/styles /assets/styles
+
+# OpenShift runs containers as an arbitrarily assigned, non-root UID that
+# is always a member of the root group (GID 0), regardless of that UID's
+# value -- group-own these files and mirror owner permissions onto the
+# group so that arbitrary UID can still read them. See
+# https://docs.openshift.com/container-platform/latest/openshift_images/create-images.html#images-create-guide-openshift_create-images
+RUN chgrp -R 0 /assets && \
+    chmod -R g=u /assets
+
+# Numeric, not a name -- OpenShift validates that the final USER of an
+# image it runs is numeric (see the same guide linked above), and a
+# numeric USER also means this image needs no extra securityContext
+# overrides to satisfy runAsNonRoot on plain Kubernetes (unlike the
+# upstream mapproxy/tileserver-gl images, which use named non-root users --
+# see charts/rbt/README.md#vanilla-kubernetes-without-an-scc).
+USER 1001
+
+# No CMD/ENTRYPOINT needed -- the init container that runs this image
+# always overrides both with an explicit `cp -a /assets/. /shared/`
+# command (see charts/rbt/templates/_tileserver.tpl), so this image is
+# never executed as-is.

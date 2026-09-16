@@ -1,0 +1,11 @@
+{{/*
+One Deployment+Service+PVC+Route set per enabled entry in
+.Values.tileservers (see values.yaml) -- currently epsg3857 and epsg4087,
+mirroring docker-compose.4087.yaml's "tileservergl" and "tileservergl4087"
+services. See templates/_tileserver.tpl for what actually gets rendered.
+*/}}
+{{- range $key, $cfg := .Values.tileservers }}
+{{- if $cfg.enabled }}
+{{ include "rbt.tileserver" (dict "root" $ "key" $key "cfg" $cfg) }}
+{{- end }}
+{{- end }}

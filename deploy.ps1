@@ -619,8 +619,14 @@ function Start-Stack {
         Write-DeployLog 'Deploying without nginx -- mapproxy and tileservergl publish their own ports directly'
     }
 
-    Write-DeployLog 'Pulling images'
-    docker compose @composeFiles pull
+    Write-DeployLog 'Building the mapproxy image'
+    docker compose @composeFiles build mapproxy
+    if ($LASTEXITCODE -ne 0) {
+        Write-ErrorAndExit "docker compose build mapproxy failed (exit $LASTEXITCODE)"
+    }
+
+    Write-DeployLog 'Pulling remaining images'
+    docker compose @composeFiles pull --ignore-buildable
     if ($LASTEXITCODE -ne 0) {
         Write-ErrorAndExit "docker compose pull failed (exit $LASTEXITCODE)"
     }
