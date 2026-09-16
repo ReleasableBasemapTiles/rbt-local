@@ -23,6 +23,27 @@ Two things have no safe generic default and must be set per-environment:
 
 ## Installing
 
+From a checkout of this repo (`charts/rbt`), or from GHCR after
+[`.github/workflows/helm-chart.yml`](../../.github/workflows/helm-chart.yml)
+publishes the chart (`Chart.yaml` version `0.1.0`):
+
+```bash
+# Private package -- once per machine / CI job
+echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u USERNAME --password-stdin
+
+helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.1.0 \
+  --set assets.image.repository=<registry>/<repo>/rbt-assets \
+  --set assets.image.tag=<tag> \
+  --set s3.accessKeyId=<key> \
+  --set s3.secretAccessKey=<secret> \
+  --set tileservers.epsg3857.s3.rbtUri=s3://my-bucket/exports \
+  --set tileservers.epsg3857.s3.terrainUri=s3://my-bucket/exports \
+  --set tileservers.epsg4087.s3.rbtUri=s3://my-bucket-4087/exports \
+  --set tileservers.epsg4087.s3.terrainUri=s3://my-bucket-4087/exports
+```
+
+Or from the chart directory:
+
 ```bash
 helm install rbt charts/rbt \
   --set assets.image.repository=<registry>/<repo>/rbt-assets \

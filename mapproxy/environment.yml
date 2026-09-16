@@ -1,0 +1,27 @@
+# conda-forge stack for Dockerfile.mapproxy. Native GIS libs (PROJ/GDAL/GEOS)
+# and pyproj must come from here -- a PyPI pyproj wheel bundles its own PROJ
+# and would undo the >=9.8 pin that fixes ellipsoidal EPSG:4087.
+name: base
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - proj>=9.8.0
+  - gdal
+  - libgdal
+  - geos
+  - pyproj
+  - pillow
+  - lxml
+  - shapely
+  - pyyaml
+  - jsonschema
+  - werkzeug<4
+  - jinja2
+  - babel
+  - python-dateutil
+  - requests
+  - multiprocess
+  - future
+  - uwsgi
+  - pip

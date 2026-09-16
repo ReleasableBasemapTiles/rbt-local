@@ -11,6 +11,9 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Required to pull this repo's private GHCR images (mapproxy, and the
+# assets image once it is also published here). Create a pull secret
+# from a GitHub PAT with `read:packages` and set it here.
 imagePullSecrets: []
 
 commonLabels: {}
@@ -40,15 +43,15 @@ containerSecurityContext:
     type: RuntimeDefault
 
 # ---------------------------------------------------------------------------
-# MapProxy -- the WMS/WMTS entry point. Runs uwsgi directly (the "-nginx"
-# image tag is only used because it's the one upstream variant with uwsgi
-# installed; its bundled nginx is never started -- see
-# docker-compose.4087.yaml's comment on the mapproxy service).
+# MapProxy -- the WMS/WMTS entry point. Image is built by
+# .github/workflows/mapproxy-image.yml (PROJ >= 9.8, ellipsoidal EPSG:4087)
+# and pushed to this repo's GHCR. Compose still builds the same
+# Dockerfile locally; Helm pulls the published image.
 # ---------------------------------------------------------------------------
 mapproxy:
   image:
-    repository: ghcr.io/mapproxy/mapproxy/mapproxy
-    tag: 7.0.0-nginx
+    repository: ghcr.io/releasablebasemaptile/rbt-local/mapproxy
+    tag: 7.0.0
     pullPolicy: IfNotPresent
   replicaCount: 1
   containerPort: 5000

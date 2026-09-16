@@ -1,0 +1,26 @@
+# Shared by Dockerfile.mapproxy and Dockerfile.assets (both use context .).
+# Keep mapproxy/environment.yml, mapproxy/docker/app.py, tileserver/fonts,
+# and tileserver/styles -- everything else is build-context noise, and
+# tileserver/data MBTiles are large enough to stall the upload.
+.git
+.cursor
+**/.DS_Store
+
+tileserver/data
+tileserver/config
+
+mapproxy/config
+mapproxy/data
+mapproxy/locks
+mapproxy/tile_locks
+
+nginx
+charts
+docs
+*.md
+
+deploy.sh
+deploy.ps1
+docker-compose*.yaml
+.env
+.env.example

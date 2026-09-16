@@ -1,0 +1,79 @@
+# Build Dockerfile.mapproxy and push to this repository's GHCR:
+#   ghcr.io/releasablebasemaptile/rbt-local/mapproxy
+#
+# Triggers on changes to the image inputs, and on workflow_dispatch so a
+# branch can publish before merge. linux/amd64 + linux/arm64 (same pair
+# the rest of this stack documents). This repo is private, so the package
+# is private -- OpenShift/Kubernetes needs imagePullSecrets to pull it.
+#
+#   gh workflow run mapproxy-image.yml
+
+name: MapProxy image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile.mapproxy
+      - mapproxy/environment.yml
+      - mapproxy/docker/app.py
+      - .github/workflows/mapproxy-image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: mapproxy-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # metadata-action lowercases this; GHCR requires lowercase names.
+  IMAGE: ghcr.io/${{ github.repository }}/mapproxy
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=7.0.0
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=ref,event=branch
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.mapproxy
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

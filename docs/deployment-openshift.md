@@ -47,7 +47,21 @@ Both TileserverGL Deployments also run a `copy-assets` init container (seeding f
    docker push <registry>/<repo>/rbt-assets:<tag>
    ```
 
-2. **Install the chart**, pointing it at that image and your S3 buckets:
+2. **Install the chart**, pointing it at that image and your S3 buckets. From a checkout of this repo (`charts/rbt`), or from GHCR after [`.github/workflows/helm-chart.yml`](../.github/workflows/helm-chart.yml) publishes it (`helm registry login ghcr.io` first -- the package is private):
+
+   ```bash
+   helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.1.0 \
+     --set assets.image.repository=<registry>/<repo>/rbt-assets \
+     --set assets.image.tag=<tag> \
+     --set s3.accessKeyId=<key> \
+     --set s3.secretAccessKey=<secret> \
+     --set tileservers.epsg3857.s3.rbtUri=s3://my-bucket/exports \
+     --set tileservers.epsg3857.s3.terrainUri=s3://my-bucket/exports \
+     --set tileservers.epsg4087.s3.rbtUri=s3://my-bucket-4087/exports \
+     --set tileservers.epsg4087.s3.terrainUri=s3://my-bucket-4087/exports
+   ```
+
+   Or from the chart directory:
 
    ```bash
    helm install rbt charts/rbt \

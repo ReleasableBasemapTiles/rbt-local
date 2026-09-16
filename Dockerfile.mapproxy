@@ -1,0 +1,65 @@
+# Custom MapProxy image: Python 3.14 + conda-forge GDAL/PROJ >= 9.8
+# (ellipsoidal EPSG:4087) + MapProxy 7 + uwsgi. Drop-in replacement for
+# ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx as this stack uses it
+# (uwsgi directly; the official image's bundled nginx is not installed).
+#
+# Build from the repo root:
+#   docker build -f Dockerfile.mapproxy -t rbt-mapproxy:7.0.0 .
+
+FROM mambaorg/micromamba:2.9.0-debian12-slim
+
+ARG NEW_MAMBA_USER=mapproxy
+ARG NEW_MAMBA_USER_ID=1000
+ARG NEW_MAMBA_USER_GID=1000
+
+USER root
+
+# debian12-slim includes passwd (usermod/groupmod). Remap the image user
+# to 1000:1000 so host bind-mounts (mapproxy/data, locks, tile_locks)
+# match the existing deploy.sh / install-docs chown.
+RUN usermod "--login=${NEW_MAMBA_USER}" "--home=/home/${NEW_MAMBA_USER}" \
+      --move-home "-u ${NEW_MAMBA_USER_ID}" "${MAMBA_USER}" && \
+    groupmod "--new-name=${NEW_MAMBA_USER}" \
+      "-g ${NEW_MAMBA_USER_GID}" "${MAMBA_USER}" && \
+    echo "${NEW_MAMBA_USER}" > /etc/arg_mamba_user && \
+    chown -R "${NEW_MAMBA_USER_ID}:${NEW_MAMBA_USER_GID}" \
+      "${MAMBA_ROOT_PREFIX}" "/home/${NEW_MAMBA_USER}"
+
+ENV MAMBA_USER=$NEW_MAMBA_USER
+# PATH so Kubernetes `command:` (which replaces Docker ENTRYPOINT) still
+# finds uwsgi. PROJ_DATA/GDAL_DATA so those tools work without conda
+# activation (same reason).
+ENV PATH="${MAMBA_ROOT_PREFIX}/bin:${PATH}" \
+    PROJ_DATA="${MAMBA_ROOT_PREFIX}/share/proj" \
+    GDAL_DATA="${MAMBA_ROOT_PREFIX}/share/gdal" \
+    PROJ_NETWORK=OFF
+
+USER $MAMBA_USER
+
+COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/environment.yml /tmp/environment.yml
+RUN micromamba install -y -n base -f /tmp/environment.yml && \
+    micromamba clean --all --yes && \
+    rm /tmp/environment.yml
+
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+ARG MAPPROXY_VERSION=7.0.0
+# --no-deps: MapProxy is not on conda-forge; its PyPI deps include pyproj,
+# whose wheels bundle a private PROJ and would undo the >=9.8 pin above.
+RUN pip install --no-cache-dir --no-deps "MapProxy==${MAPPROXY_VERSION}" && \
+    python -c "\
+import pyproj; \
+print('PROJ', pyproj.__proj_version__); \
+assert tuple(int(p) for p in pyproj.__proj_version__.split('.')[:2]) >= (9, 8), pyproj.__proj_version__; \
+from pyproj import Transformer; \
+_, y = Transformer.from_crs(4326, 4087, always_xy=True).transform(10, 5); \
+print('EPSG:4087 Y(10,5) =', y); \
+assert abs(y - 552885.45) < 1, y"
+
+WORKDIR /mapproxy
+COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/docker/app.py /mapproxy/app.py
+
+# Numeric USER -- OpenShift validates this; Compose/Helm already run as 1000.
+USER 1000
+
+# micromamba ENTRYPOINT activates the env for Compose `command:`.
+CMD ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
