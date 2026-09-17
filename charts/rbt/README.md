@@ -6,36 +6,33 @@ This chart targets **OpenShift** specifically -- every Deployment's `securityCon
 
 ## Before you install
 
-Two things have no safe generic default and must be set per-environment:
+Fonts, styles, and MBTiles have no safe generic default and must be set per-environment. Either:
 
-1. **An assets image.** `tileserver/fonts` (114MB) and `tileserver/styles` (5MB) are binary, static assets -- too large and the wrong shape for a ConfigMap. Build and push [Dockerfile.assets](../../Dockerfile.assets) from the repo root first:
+- Set `s3.fontsUri`/`s3.stylesUri` (the shared trees both TileserverGL instances use) and `tileservers.<key>.s3.rbtUri`/`s3.terrainUri` (one pair per enabled projection), plus S3 credentials -- see [S3 credentials](#s3-credentials) below -- so the `fetch-s3` init container downloads them, or
+- Pre-populate a PVC yourself (e.g. `oc rsync` of `RBT.mbtiles`, `TERRAIN.mbtiles`, `fonts/`, and `styles/`) and set `tileservers.<key>.persistence.existingClaim` to its name, leaving those URIs blank.
 
-   ```bash
-   docker build -f Dockerfile.assets -t <registry>/<repo>/rbt-assets:<tag> .
-   docker push <registry>/<repo>/rbt-assets:<tag>
-   ```
+Upload the font and style trees with:
 
-   `helm template`/`install` fails immediately with a clear error if `assets.image.repository`/`assets.image.tag` are left unset, rather than deploying a pod with a broken `image: ":"` reference.
-
-2. **RBT.mbtiles/TERRAIN.mbtiles**, one pair per enabled projection. Either:
-   - Set `tileservers.<key>.s3.rbtUri`/`s3.terrainUri` (and S3 credentials -- see [S3 credentials](#s3-credentials) below) so the init container downloads them, mirroring [deploy.sh](../../deploy.sh)'s own download step, or
-   - Pre-populate a PVC yourself (e.g. `oc rsync`) and set `tileservers.<key>.persistence.existingClaim` to its name, leaving `s3.rbtUri`/`s3.terrainUri` blank.
+```bash
+aws s3 sync tileserver/fonts  s3://my-bucket/fonts
+aws s3 sync tileserver/styles s3://my-bucket/styles
+```
 
 ## Installing
 
 From a checkout of this repo (`charts/rbt`), or from GHCR after
 [`.github/workflows/helm-chart.yml`](../../.github/workflows/helm-chart.yml)
-publishes the chart (`Chart.yaml` version `0.1.0`):
+publishes the chart (`Chart.yaml` version `0.2.0`):
 
 ```bash
 # Private package -- once per machine / CI job
 echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u USERNAME --password-stdin
 
-helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.1.0 \
-  --set assets.image.repository=<registry>/<repo>/rbt-assets \
-  --set assets.image.tag=<tag> \
+helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.2.0 \
   --set s3.accessKeyId=<key> \
   --set s3.secretAccessKey=<secret> \
+  --set s3.fontsUri=s3://my-bucket/fonts \
+  --set s3.stylesUri=s3://my-bucket/styles \
   --set tileservers.epsg3857.s3.rbtUri=s3://my-bucket/exports \
   --set tileservers.epsg3857.s3.terrainUri=s3://my-bucket/exports \
   --set tileservers.epsg4087.s3.rbtUri=s3://my-bucket-4087/exports \
@@ -46,10 +43,10 @@ Or from the chart directory:
 
 ```bash
 helm install rbt charts/rbt \
-  --set assets.image.repository=<registry>/<repo>/rbt-assets \
-  --set assets.image.tag=<tag> \
   --set s3.accessKeyId=<key> \
   --set s3.secretAccessKey=<secret> \
+  --set s3.fontsUri=s3://my-bucket/fonts \
+  --set s3.stylesUri=s3://my-bucket/styles \
   --set tileservers.epsg3857.s3.rbtUri=s3://my-bucket/exports \
   --set tileservers.epsg3857.s3.terrainUri=s3://my-bucket/exports \
   --set tileservers.epsg4087.s3.rbtUri=s3://my-bucket-4087/exports \
@@ -66,21 +63,17 @@ Set `tileservers.epsg4087.enabled=false` to deploy the plain-`mapproxy.yaml` equ
 
 ## S3 credentials
 
-The `fetch-mbtiles` init container on each TileserverGL pod authenticates to S3 the same way `aws s3 cp` always does -- from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in its environment. By default the chart templates a Secret from `s3.accessKeyId`/`s3.secretAccessKey`; set `s3.existingSecret` to the name of a Secret you created yourself (with `access-key-id`/`secret-access-key` keys) to skip that. `s3.endpointUrl`/`s3.region` cover an S3-compatible store other than AWS itself.
+The `fetch-s3` init container on each TileserverGL pod authenticates to S3 the same way `aws s3 cp`/`sync` always do -- from `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` in its environment. By default the chart templates a Secret from `s3.accessKeyId`/`s3.secretAccessKey`; set `s3.existingSecret` to the name of a Secret you created yourself (with `access-key-id`/`secret-access-key` keys) to skip that. `s3.endpointUrl`/`s3.region` cover an S3-compatible store other than AWS itself.
 
-If every `tileservers.<key>.s3.rbtUri`/`s3.terrainUri` is blank (e.g. both instances use `persistence.existingClaim` instead), the init container's fetch script no-ops before ever using these credentials -- you don't need real values in that case, the templated Secret's blank defaults are enough.
+If every `tileservers.<key>.s3.rbtUri`/`s3.terrainUri` and `s3.fontsUri`/`s3.stylesUri` is blank (e.g. both instances use `persistence.existingClaim` instead), the init container's fetch script no-ops before ever using these credentials -- you don't need real values in that case, the templated Secret's blank defaults are enough.
 
 ## OpenShift compatibility
 
-Every pod's `securityContext` (see `podSecurityContext`/`containerSecurityContext` in `values.yaml`) deliberately omits `runAsUser`/`fsGroup`. OpenShift's `restricted-v2` SCC injects both from the namespace's allocated range *before* the kubelet's `runAsNonRoot` check runs, so this works regardless of what user each image's own `Dockerfile` declares -- including the upstream `mapproxy`/`tileserver-gl` images (named non-root users, `mapproxy`/`node`) and the `aws-cli` image (root by default) alike. The one image this chart builds (`Dockerfile.assets`) uses a numeric `USER 1001` and group-owns its files (`chgrp -R 0 && chmod -R g=u`) per [OpenShift's image guidelines](https://docs.openshift.com/container-platform/latest/openshift_images/create-images.html#images-create-guide-openshift_create-images) -- volumes (PVCs, `emptyDir`) need no such treatment, since the SCC's `fsGroup` strategy makes them group-writable automatically.
+Every pod's `securityContext` (see `podSecurityContext`/`containerSecurityContext` in `values.yaml`) deliberately omits `runAsUser`/`fsGroup`. OpenShift's `restricted-v2` SCC injects both from the namespace's allocated range *before* the kubelet's `runAsNonRoot` check runs, so this works regardless of what user each image's own `Dockerfile` declares -- including the upstream `mapproxy`/`tileserver-gl` images (named non-root users, `mapproxy`/`node`) and the `aws-cli` image (root by default) alike. Volumes (PVCs, `emptyDir`) need no extra `chgrp` treatment, since the SCC's `fsGroup` strategy makes them group-writable automatically.
 
 ### Vanilla Kubernetes (without an SCC)
 
 Without an SCC to inject `runAsUser`, `containerSecurityContext.runAsNonRoot: true` (the default) makes the kubelet refuse to start any container whose *effective* user resolves to root -- including the `mapproxy`/`tileserver-gl`/`aws-cli` containers above, if their images happen to default to root or a user Kubernetes can't already tell is non-zero. You'll need to set `containerSecurityContext.runAsUser` (and `podSecurityContext.fsGroup`, so mounted volumes are writable by that UID) to a concrete numeric UID yourself -- Kubernetes' `runAsUser` field takes a number, not the `mapproxy`/`node` usernames those two Dockerfiles declare, and there's no single value this chart can default to that's guaranteed correct for every image and cluster. Recent tags of both upstream images run their main process as UID `1000` (macOS Docker Desktop tolerates this transparently, which is why the Compose deployment never had to think about it) -- check `docker image inspect --format '{{.Config.User}}' <image>` against a real container run if you need the current values.
-
-## Assets image
-
-See [Before you install](#before-you-install) above for the build command. Rebuild and push a new tag whenever `tileserver/fonts` or `tileserver/styles` change -- nothing in this repo automates that for you. The chart runs this image as an init container that copies `/assets/fonts` and `/assets/styles` into a shared `emptyDir`, since Kubernetes has no "mount this other image's filesystem into that container" primitive the way a Compose bind mount does.
 
 ## Why `charts/rbt/files/` duplicates repo-root configs
 

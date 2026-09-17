@@ -11,9 +11,8 @@
 nameOverride: ""
 fullnameOverride: ""
 
-# Required to pull this repo's private GHCR images (mapproxy, and the
-# assets image once it is also published here). Create a pull secret
-# from a GitHub PAT with `read:packages` and set it here.
+# Required to pull this repo's private GHCR MapProxy image. Create a pull
+# secret from a GitHub PAT with `read:packages` and set it here.
 imagePullSecrets: []
 
 commonLabels: {}
@@ -94,17 +93,6 @@ tileserverImage:
   tag: v5.7.0-pre.1
   pullPolicy: IfNotPresent
 
-# fonts/ and styles/ (114MB + 5MB of binary assets -- too large and too
-# binary for a ConfigMap) are baked into this image by ../../Dockerfile.assets
-# and copied into a shared emptyDir by an init container at pod startup. See
-# charts/rbt/README.md#assets-image for how to build and publish it -- there
-# is no public default, so this MUST be set before installing the chart.
-assets:
-  image:
-    repository: ""
-    tag: ""
-    pullPolicy: IfNotPresent
-
 # Two TileserverGL Deployments, one per projection -- see
 # docs/deployment-4087.md for why EPSG:4087 improves EPSG:4326 output.
 # serviceName defaults to the exact container_name docker-compose.4087.yaml
@@ -135,7 +123,8 @@ tileservers:
       accessModes:
         - ReadWriteOnce
       # Set to reuse a PVC populated out-of-band instead of the init
-      # container S3 download below (leave s3.rbtUri/terrainUri blank too).
+      # container S3 download below (leave s3.rbtUri/terrainUri and
+      # s3.fontsUri/stylesUri blank too).
       existingClaim: ""
     s3:
       # s3://bucket[/prefix], no filename -- e.g. "s3://my-bucket/exports".
@@ -190,9 +179,12 @@ tileservers:
         insecureEdgeTerminationPolicy: Redirect
 
 # ---------------------------------------------------------------------------
-# S3 credentials for the mbtiles-fetching init containers (see
-# charts/rbt/files/scripts/fetch-mbtiles.sh). Ignored entirely for a
-# tileserver instance whose persistence.existingClaim is set.
+# S3 credentials and shared prefixes for the fetch-s3 init containers (see
+# charts/rbt/files/scripts/fetch-s3.sh). Per-projection MBTiles URIs live
+# under tileservers.<key>.s3; fonts/styles are the same tree both
+# instances use (matching docker-compose.4087.yaml's shared bind mounts).
+# Ignored entirely for a tileserver instance whose
+# persistence.existingClaim is set (leave the URIs blank in that case).
 # ---------------------------------------------------------------------------
 s3:
   # Name of a pre-existing Secret with access-key-id/secret-access-key
@@ -203,6 +195,12 @@ s3:
   region: us-east-1
   # Only needed for an S3-compatible store other than AWS S3 itself.
   endpointUrl: ""
+  # s3://bucket[/prefix] of the fonts/ or styles/ directory tree (no
+  # trailing filename). Upload with:
+  #   aws s3 sync tileserver/fonts  s3://my-bucket/fonts
+  #   aws s3 sync tileserver/styles s3://my-bucket/styles
+  fontsUri: ""
+  stylesUri: ""
 
 mbtiles:
   awsCliImage:
@@ -210,8 +208,8 @@ mbtiles:
     tag: "2.36.43"
     pullPolicy: IfNotPresent
   # Mirrors deploy.sh's --force: re-download RBT.mbtiles/TERRAIN.mbtiles
-  # even if already present in the PVC, instead of only re-downloading
-  # RBT.mbtiles when the S3 object is newer.
+  # even if already present in the PVC, and `aws s3 sync --delete` fonts/
+  # styles so local files removed from S3 are dropped too.
   force: false
 
 networkPolicy:

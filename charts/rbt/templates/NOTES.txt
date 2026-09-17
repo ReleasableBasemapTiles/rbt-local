@@ -8,9 +8,10 @@ Check rollout status:
   oc rollout status deployment/{{ include "rbt.fullname" . }}-epsg4087 -n {{ .Release.Namespace }}
 {{- end }}
 
-The first rollout can take a while -- the fetch-mbtiles init container on
-each TileserverGL pod downloads RBT.mbtiles/TERRAIN.mbtiles from S3 before
-the main container even starts (`oc logs -f <pod> -c fetch-mbtiles -n {{ .Release.Namespace }}`
+The first rollout can take a while -- the fetch-s3 init container on
+each TileserverGL pod downloads RBT.mbtiles/TERRAIN.mbtiles and the
+shared fonts/styles trees from S3 before the main container even starts
+(`oc logs -f <pod> -c fetch-s3 -n {{ .Release.Namespace }}`
 to watch progress).
 
 {{- if .Values.mapproxy.route.enabled }}

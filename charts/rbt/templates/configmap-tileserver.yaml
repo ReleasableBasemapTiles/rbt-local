@@ -12,5 +12,5 @@ data:
   # its own mbtiles at /data (see templates/_tileserver.tpl).
   config.json: |
 {{ .Files.Get "files/tileserver/config.json" | indent 4 }}
-  fetch-mbtiles.sh: |
-{{ .Files.Get "files/scripts/fetch-mbtiles.sh" | indent 4 }}
+  fetch-s3.sh: |
+{{ .Files.Get "files/scripts/fetch-s3.sh" | indent 4 }}

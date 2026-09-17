@@ -44,31 +44,16 @@ spec:
       securityContext:
         {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
       initContainers:
-        # Seeds the "assets" emptyDir from the image built by
-        # ../../../Dockerfile.assets, instead of mounting that image's
-        # filesystem directly -- an init container is the closest
-        # Kubernetes equivalent of docker-compose.4087.yaml's fonts/styles
-        # bind mounts, since Kubernetes has no "mount this image's files
-        # into that container" primitive.
-        - name: copy-assets
-          image: "{{ required "assets.image.repository is required -- build+push Dockerfile.assets first, see charts/rbt/README.md#assets-image" $root.Values.assets.image.repository }}:{{ required "assets.image.tag is required -- see charts/rbt/README.md#assets-image" $root.Values.assets.image.tag }}"
-          imagePullPolicy: {{ $root.Values.assets.image.pullPolicy }}
-          command: ["/bin/sh", "-c", "cp -a /assets/. /shared/"]
-          securityContext:
-            {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
-          volumeMounts:
-            - name: assets
-              mountPath: /shared
-        # Populates the mbtiles PVC from S3 -- see
-        # ../files/scripts/fetch-mbtiles.sh for the download/refresh logic
-        # (mirrors deploy.sh's fetch_mbtiles()). Skipped in effect (both
-        # fetch() calls no-op) when s3.rbtUri/terrainUri are blank, which
-        # is expected when persistence.existingClaim points at a PVC
-        # populated out-of-band instead.
-        - name: fetch-mbtiles
+        # Populates the PVC from S3 -- MBTiles plus the shared fonts/ and
+        # styles/ trees (see ../files/scripts/fetch-s3.sh). Fonts/styles
+        # are the OpenShift equivalent of docker-compose.4087.yaml's bind
+        # mounts, without a second image. The fetch helpers no-op when
+        # their URI is blank, which is expected when
+        # persistence.existingClaim points at a PVC populated out-of-band.
+        - name: fetch-s3
           image: "{{ $root.Values.mbtiles.awsCliImage.repository }}:{{ $root.Values.mbtiles.awsCliImage.tag }}"
           imagePullPolicy: {{ $root.Values.mbtiles.awsCliImage.pullPolicy }}
-          command: ["bash", "/scripts/fetch-mbtiles.sh"]
+          command: ["bash", "/scripts/fetch-s3.sh"]
           env:
             - name: HOME
               value: /tmp
@@ -78,6 +63,10 @@ spec:
               value: {{ $cfg.s3.rbtUri | quote }}
             - name: TERRAIN_S3_URI
               value: {{ $cfg.s3.terrainUri | quote }}
+            - name: FONTS_S3_URI
+              value: {{ $root.Values.s3.fontsUri | quote }}
+            - name: STYLES_S3_URI
+              value: {{ $root.Values.s3.stylesUri | quote }}
             - name: FORCE_DOWNLOAD
               value: {{ $root.Values.mbtiles.force | quote }}
             - name: AWS_REGION
@@ -130,10 +119,10 @@ spec:
           securityContext:
             {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
-            - name: assets
+            - name: mbtiles
               mountPath: /fonts
               subPath: fonts
-            - name: assets
+            - name: mbtiles
               mountPath: /styles
               subPath: styles
             - name: tileserver-config
@@ -168,8 +157,6 @@ spec:
           resources:
             {{- toYaml $cfg.resources | nindent 12 }}
       volumes:
-        - name: assets
-          emptyDir: {}
         - name: tileserver-config
           configMap:
             name: {{ $fullname }}-tileserver-config
@@ -181,8 +168,8 @@ spec:
             name: {{ $fullname }}-tileserver-config
             defaultMode: 0755
             items:
-              - key: fetch-mbtiles.sh
-                path: fetch-mbtiles.sh
+              - key: fetch-s3.sh
+                path: fetch-s3.sh
         # docker-compose.4087.yaml's `shm_size: ${TILESERVER_SHM_SIZE:-2gb}`.
         - name: dshm
           emptyDir:
