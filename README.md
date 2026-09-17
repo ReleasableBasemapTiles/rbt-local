@@ -171,7 +171,7 @@ flowchart LR
 
 ### 5. OpenShift/Kubernetes via Helm
 
-The four deployments above all run on a single Docker host via Compose. [`charts/rbt`](charts/rbt) is a Helm chart that deploys the same containers as option 4 (EPSG:4087 dual-TileserverGL, no nginx) to a Kubernetes/OpenShift cluster instead, with `RBT.mbtiles`/`TERRAIN.mbtiles` downloaded into PVCs and `tileserver/fonts`/`tileserver/styles` packaged into an image by [Dockerfile.assets](Dockerfile.assets) rather than bind-mounted. See [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md).
+The four deployments above all run on a single Docker host via Compose. [`charts/rbt`](charts/rbt) is a Helm chart that deploys the same containers as option 4 (EPSG:4087 dual-TileserverGL, no nginx) to a Kubernetes/OpenShift cluster instead, with `RBT.mbtiles`/`TERRAIN.mbtiles` and `tileserver/fonts`/`tileserver/styles` downloaded from S3 into PVCs rather than bind-mounted. See [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md).
 
 ## Verifying It's Working
 

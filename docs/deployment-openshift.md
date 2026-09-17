@@ -30,31 +30,23 @@ flowchart LR
   svcTS87 --> ts4087
 ```
 
-Both TileserverGL Deployments also run a `copy-assets` init container (seeding fonts/styles from the image built by [`Dockerfile.assets`](../Dockerfile.assets)) and a `fetch-mbtiles` init container (downloading `RBT.mbtiles`/`TERRAIN.mbtiles` from S3 into their PVC), neither shown above -- see [charts/rbt/README.md](../charts/rbt/README.md) for what those do and how to configure them.
+Both TileserverGL Deployments also run a `fetch-s3` init container (downloading `RBT.mbtiles`/`TERRAIN.mbtiles` and the shared `fonts/`/`styles/` trees from S3 into their PVC), not shown above -- see [charts/rbt/README.md](../charts/rbt/README.md) for what that does and how to configure it.
 
 ## Prerequisites
 
 - `helm` 3.x and `oc` (or `kubectl`), authenticated against your cluster and project/namespace
-- Push access to a container registry the cluster can pull from, for the assets image (step 1 below)
-- The same S3 access this repo's other deployments need -- see the main README's [Get S3 Credentials](../README.md#get-s3-credentials) -- or pre-populated PVCs if you'd rather skip the in-cluster download (see [charts/rbt/README.md](../charts/rbt/README.md))
+- The same S3 access this repo's other deployments need -- see the main README's [Get S3 Credentials](../README.md#get-s3-credentials) -- plus `s3://` prefixes for `tileserver/fonts` and `tileserver/styles` (`aws s3 sync tileserver/fonts s3://my-bucket/fonts`, same for `styles`), or pre-populated PVCs if you'd rather skip the in-cluster download (see [charts/rbt/README.md](../charts/rbt/README.md))
 
 ## Deploying
 
-1. **Build and push the assets image** (fonts/styles -- see [charts/rbt/README.md#assets-image](../charts/rbt/README.md#assets-image)):
+1. **Install the chart**, pointing it at your S3 buckets. From a checkout of this repo (`charts/rbt`), or from GHCR after [`.github/workflows/helm-chart.yml`](../.github/workflows/helm-chart.yml) publishes it (`helm registry login ghcr.io` first -- the package is private):
 
    ```bash
-   docker build -f Dockerfile.assets -t <registry>/<repo>/rbt-assets:<tag> .
-   docker push <registry>/<repo>/rbt-assets:<tag>
-   ```
-
-2. **Install the chart**, pointing it at that image and your S3 buckets. From a checkout of this repo (`charts/rbt`), or from GHCR after [`.github/workflows/helm-chart.yml`](../.github/workflows/helm-chart.yml) publishes it (`helm registry login ghcr.io` first -- the package is private):
-
-   ```bash
-   helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.1.0 \
-     --set assets.image.repository=<registry>/<repo>/rbt-assets \
-     --set assets.image.tag=<tag> \
+   helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.2.0 \
      --set s3.accessKeyId=<key> \
      --set s3.secretAccessKey=<secret> \
+     --set s3.fontsUri=s3://my-bucket/fonts \
+     --set s3.stylesUri=s3://my-bucket/styles \
      --set tileservers.epsg3857.s3.rbtUri=s3://my-bucket/exports \
      --set tileservers.epsg3857.s3.terrainUri=s3://my-bucket/exports \
      --set tileservers.epsg4087.s3.rbtUri=s3://my-bucket-4087/exports \
@@ -65,10 +57,10 @@ Both TileserverGL Deployments also run a `copy-assets` init container (seeding f
 
    ```bash
    helm install rbt charts/rbt \
-     --set assets.image.repository=<registry>/<repo>/rbt-assets \
-     --set assets.image.tag=<tag> \
      --set s3.accessKeyId=<key> \
      --set s3.secretAccessKey=<secret> \
+     --set s3.fontsUri=s3://my-bucket/fonts \
+     --set s3.stylesUri=s3://my-bucket/styles \
      --set tileservers.epsg3857.s3.rbtUri=s3://my-bucket/exports \
      --set tileservers.epsg3857.s3.terrainUri=s3://my-bucket/exports \
      --set tileservers.epsg4087.s3.rbtUri=s3://my-bucket-4087/exports \
@@ -77,11 +69,11 @@ Both TileserverGL Deployments also run a `copy-assets` init container (seeding f
 
    See [charts/rbt/values.yaml](../charts/rbt/values.yaml) for every available key (Route hostnames, PVC sizes, resource requests/limits, etc.) -- a `-f myvalues.yaml` file is easier to manage than a long `--set` list for anything beyond a first try.
 
-3. **Watch the rollout.** The first one takes a while -- each TileserverGL pod's `fetch-mbtiles` init container downloads the MBTiles from S3 before its main container even starts:
+2. **Watch the rollout.** The first one takes a while -- each TileserverGL pod's `fetch-s3` init container downloads the MBTiles and fonts/styles from S3 before its main container even starts:
 
    ```bash
    oc get pods -w
-   oc logs -f <epsg3857-pod> -c fetch-mbtiles
+   oc logs -f <epsg3857-pod> -c fetch-s3
    ```
 
 `helm install` prints Route URLs and a few sanity-check commands in its NOTES output when it finishes -- `helm get notes rbt` to see them again later.

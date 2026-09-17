@@ -1,13 +1,14 @@
-# Shared by Dockerfile.mapproxy and Dockerfile.assets (both use context .).
-# Keep mapproxy/environment.yml, mapproxy/docker/app.py, tileserver/fonts,
-# and tileserver/styles -- everything else is build-context noise, and
-# tileserver/data MBTiles are large enough to stall the upload.
+# Used by Dockerfile.mapproxy (context .). tileserver/fonts and
+# tileserver/styles are bind-mounted at Compose runtime, not copied into
+# any image; tileserver/data MBTiles are large enough to stall the upload.
 .git
 .cursor
 **/.DS_Store
 
 tileserver/data
 tileserver/config
+tileserver/fonts
+tileserver/styles
 
 mapproxy/config
 mapproxy/data

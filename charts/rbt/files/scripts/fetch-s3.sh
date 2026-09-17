@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
 #
 # Runs as an init container (see charts/rbt/templates/_tileserver.tpl) to
-# populate one TileserverGL instance's mbtiles PVC from S3, mirroring
-# deploy.sh's fetch_mbtiles() (see the repo root's deploy.sh) for a single
-# Linux/GNU-userland container instead of deploy.sh's macOS + Linux split.
+# populate one TileserverGL instance's PVC from S3: RBT.mbtiles /
+# TERRAIN.mbtiles plus the shared fonts/ and styles/ trees. Mirrors
+# deploy.sh's fetch_mbtiles() for the two MBTiles files (Linux/GNU
+# userland, not deploy.sh's macOS + Linux split). Fonts and styles are
+# `aws s3 sync`'d so only changed objects are downloaded on later
+# restarts -- they live on the PVC next to the MBTiles, not an emptyDir.
+#
 # TERRAIN.mbtiles is only ever downloaded once (it never changes upstream);
 # RBT.mbtiles re-downloads whenever the S3 object's LastModified is newer
 # than the local copy's mtime, or unconditionally when FORCE_DOWNLOAD=true.
+# Fonts/styles always sync (cheap when already current); FORCE_DOWNLOAD=true
+# adds --delete so local files removed from S3 are dropped too.
 #
 # Required env vars: RBT_S3_URI, TERRAIN_S3_URI -- s3://bucket[/prefix] with
 # no filename (see charts/rbt/values.yaml's tileservers.<key>.s3.rbtUri/
-# terrainUri). Either may be left empty to skip that file (e.g. when
-# pointing persistence.existingClaim at a PVC someone else already
-# populated). Optional: DATA_DIR (default /data), FORCE_DOWNLOAD (default
-# false), AWS_ENDPOINT_URL, AWS_REGION. AWS credentials come from the
-# environment (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or a mounted
-# pod-identity token) exactly as `aws s3 cp` picks them up outside this
-# script -- nothing here configures them.
+# terrainUri). FONTS_S3_URI / STYLES_S3_URI -- s3://bucket[/prefix] of the
+# fonts/ or styles/ tree (see s3.fontsUri/stylesUri). Any of these may be
+# left empty to skip that fetch (e.g. when persistence.existingClaim
+# points at a PVC someone else already populated). Optional: DATA_DIR
+# (default /data), FORCE_DOWNLOAD (default false), AWS_ENDPOINT_URL,
+# AWS_REGION. AWS credentials come from the environment
+# (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, or a mounted pod-identity
+# token) exactly as `aws s3 cp`/`sync` pick them up outside this script --
+# nothing here configures them.
 
 set -euo pipefail
 
@@ -90,12 +98,43 @@ fetch() {
   aws s3 cp "$remote_uri" "$dest"
 }
 
+# Recursive prefix sync for fonts/ and styles/. aws s3 sync only transfers
+# objects that differ, so a populated PVC is cheap on later pod starts.
+fetch_tree() {
+  local uri="$1" dest="$2" label="$3"
+  local -a sync_args=(s3 sync)
+
+  if [[ -z "$uri" ]]; then
+    warn "No S3 URI configured for $label; leaving whatever is already in $dest (if anything) alone"
+    return 0
+  fi
+
+  mkdir -p "$dest"
+  if [[ "$FORCE_DOWNLOAD" == "true" ]]; then
+    sync_args+=(--delete)
+    log "Syncing $label from $uri to $dest (--delete, FORCE_DOWNLOAD=true)"
+  else
+    log "Syncing $label from $uri to $dest"
+  fi
+  aws "${sync_args[@]}" "${uri%/}/" "$dest/"
+}
+
+dir_has_files() {
+  local dir="$1"
+  [[ -d "$dir" ]] || return 1
+  [[ -n "$(find "$dir" -type f -print -quit)" ]]
+}
+
 mkdir -p "$DATA_DIR"
 
 fetch "${RBT_S3_URI:-}" "$DATA_DIR/RBT.mbtiles" 1
 fetch "${TERRAIN_S3_URI:-}" "$DATA_DIR/TERRAIN.mbtiles" 0
+fetch_tree "${FONTS_S3_URI:-}" "$DATA_DIR/fonts" "fonts"
+fetch_tree "${STYLES_S3_URI:-}" "$DATA_DIR/styles" "styles"
 
 [[ -s "$DATA_DIR/RBT.mbtiles" ]] || die "$DATA_DIR/RBT.mbtiles is missing or empty -- set tileservers.<key>.s3.rbtUri, or pre-populate the PVC and set persistence.existingClaim"
 [[ -s "$DATA_DIR/TERRAIN.mbtiles" ]] || die "$DATA_DIR/TERRAIN.mbtiles is missing or empty -- set tileservers.<key>.s3.terrainUri, or pre-populate the PVC and set persistence.existingClaim"
+dir_has_files "$DATA_DIR/fonts" || die "$DATA_DIR/fonts is missing or empty -- set s3.fontsUri, or pre-populate the PVC and set persistence.existingClaim"
+dir_has_files "$DATA_DIR/styles" || die "$DATA_DIR/styles is missing or empty -- set s3.stylesUri, or pre-populate the PVC and set persistence.existingClaim"
 
-log "mbtiles ready in $DATA_DIR"
+log "mbtiles, fonts, and styles ready in $DATA_DIR"
