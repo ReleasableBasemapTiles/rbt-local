@@ -1,0 +1,28 @@
+---
+description: Conventional Commits for git commits and pull request titles (git-cliff changelog)
+alwaysApply: true
+---
+
+# Conventional Commits
+
+Commit messages and pull request titles must be [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) so git-cliff can update `CHANGELOG.md`.
+
+```text
+type(scope): short description
+```
+
+Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+
+```text
+# ❌ BAD
+Add changelog automation
+Updated the helm chart
+
+# ✅ GOOD
+feat(helm): fetch fonts and styles from S3
+fix(mapproxy): mount mapproxy.4087.yaml in the --4087 stack
+docs: document the four Compose deployments
+chore(ci): add git-cliff changelog workflow
+```
+
+Breaking changes: `feat!: ...` or a `BREAKING CHANGE:` footer. Do not hand-edit `CHANGELOG.md` for ordinary work; the Changelog workflow regenerates it. Changelog bot commits use `chore(changelog): update CHANGELOG.md [skip ci]`.
