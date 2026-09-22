@@ -1,0 +1,46 @@
+site_name: Releasable Basemap Tiles
+site_url: https://releasablebasemaptile.github.io/rbt-local/
+site_dir: site
+repo_url: https://github.com/ReleasableBasemapTiles/rbt-local
+repo_name: ReleasableBasemapTiles/rbt-local
+docs_dir: site-docs
+
+theme:
+  name: material
+
+# Setting markdown_extensions replaces MkDocs defaults, so tables stays
+# explicit. pymdownx.superfences covers fenced code blocks and Mermaid.
+markdown_extensions:
+  - toc:
+      permalink: true
+      slugify: !!python/name:scripts.prepare_pages.github_slug
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Install:
+      - macOS: install-macos.md
+      - Linux: install-linux.md
+      - Windows: install-windows.md
+  - Verify: verify.md
+  - GIS clients: gis-clients.md
+  - Advanced:
+      - Without nginx: advanced-deployment.md
+      - EPSG:4087: deployment-4087.md
+      - OpenShift: deployment-openshift.md
+  - Troubleshooting: troubleshooting.md
