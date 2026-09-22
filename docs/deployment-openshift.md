@@ -100,7 +100,7 @@ Expect `Phase: Succeeded` -- this fetches WMTS capabilities from MapProxy in-clu
 oc exec deploy/rbt-mapproxy -- head -1 /mapproxy/config/mapproxy.yaml
 ```
 
-Expect `# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its` -- same silent-fallback failure mode as the Compose deployment (see [deployment-4087.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged](deployment-4087.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged)), just checked via `oc exec` instead of `docker exec`. With `tileservers.epsg4087.enabled=false`, expect `services:` instead.
+Expect `# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its` -- same silent-fallback failure mode as the Compose deployment (see [troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged](troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged)), just checked via `oc exec` instead of `docker exec`. With `tileservers.epsg4087.enabled=false`, expect `services:` instead.
 
 ```bash
 curl -fsS "https://$(oc get route rbt-mapproxy -o jsonpath='{.spec.host}')/wmts/1.0.0/WMTSCapabilities.xml" | head -20
