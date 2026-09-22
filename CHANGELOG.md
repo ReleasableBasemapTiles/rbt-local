@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update README to include release history and contribution guidelines
 - Sync matching styles from upstream
 
+### Fixed
+
+- Read style.json on the Actions Python (#14)
+
 ## [2.0.0] - 2026-09-17
 
 ### Added
