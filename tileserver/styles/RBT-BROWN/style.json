@@ -14199,7 +14199,7 @@
           6,
           9,
           18,
-          14
+          12
         ],
         "visibility": "visible"
       },
@@ -14579,7 +14579,7 @@
           6,
           9,
           18,
-          14
+          12
         ],
         "visibility": "visible"
       },
@@ -14942,6 +14942,131 @@
       },
       "paint": {
         "text-color": "rgba(130,130,130,1)",
+        "text-halo-color": "rgba(255,255,255,0.8)",
+        "text-halo-width": 1.5
+      }
+    },
+    {
+      "id": "poi--label",
+      "type": "symbol",
+      "source": "RBT",
+      "source-layer": "poi_point",
+      "minzoom": 15,
+      "filter": [
+        "all",
+        [
+          "has",
+          "name"
+        ],
+        [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "hospital",
+            "college"
+          ],
+          true,
+          "school",
+          [
+            "step",
+            [
+              "zoom"
+            ],
+            false,
+            16,
+            true
+          ],
+          false
+        ]
+      ],
+      "layout": {
+        "icon-image": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          "school",
+          "school",
+          "college",
+          "college",
+          "hospital"
+        ],
+        "icon-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          15,
+          0.9,
+          16,
+          1
+        ],
+        "text-optional": true,
+        "text-field": "{name}",
+        "text-font": [
+          "NGATopo_reg",
+          "NotoSansRegular"
+        ],
+        "text-justify": "auto",
+        "text-radial-offset": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          8,
+          0.4,
+          10,
+          0.6
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          16,
+          13,
+          18,
+          16
+        ],
+        "text-variable-anchor": [
+          "bottom-left",
+          "top-left",
+          "bottom-right",
+          "top-right",
+          "left",
+          "right",
+          "bottom",
+          "top"
+        ],
+        "visibility": "visible"
+      },
+      "paint": {
+        "text-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "school",
+            "college"
+          ],
+          "rgba(138, 99, 151, 1)",
+          "rgba(177, 94, 78, 1)"
+        ],
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": 1.5
       }
@@ -17927,14 +18052,123 @@
           ]
         ],
         "text-field": [
-          "coalesce",
+          "step",
           [
-            "get",
-            "adm0_name"
+            "zoom"
           ],
           [
-            "get",
-            "gns_short_name"
+            "coalesce",
+            [
+              "get",
+              "nga_short_name"
+            ],
+            [
+              "get",
+              "adm0_name"
+            ],
+            [
+              "get",
+              "gns_short_name"
+            ]
+          ],
+          3,
+          [
+            "case",
+            [
+              "match",
+              [
+                "get",
+                "iso_3"
+              ],
+              [
+                "GRL"
+              ],
+              true,
+              false
+            ],
+            [
+              "coalesce",
+              [
+                "get",
+                "adm0_name"
+              ],
+              [
+                "get",
+                "gns_short_name"
+              ]
+            ],
+            [
+              "coalesce",
+              [
+                "get",
+                "nga_short_name"
+              ],
+              [
+                "get",
+                "adm0_name"
+              ],
+              [
+                "get",
+                "gns_short_name"
+              ]
+            ]
+          ],
+          6,
+          [
+            "case",
+            [
+              "match",
+              [
+                "get",
+                "iso_3"
+              ],
+              [
+                "GRL",
+                "PRI",
+                "NCL",
+                "FLK"
+              ],
+              true,
+              false
+            ],
+            [
+              "coalesce",
+              [
+                "get",
+                "adm0_name"
+              ],
+              [
+                "get",
+                "gns_short_name"
+              ]
+            ],
+            [
+              "coalesce",
+              [
+                "get",
+                "nga_short_name"
+              ],
+              [
+                "get",
+                "adm0_name"
+              ],
+              [
+                "get",
+                "gns_short_name"
+              ]
+            ]
+          ],
+          8,
+          [
+            "coalesce",
+            [
+              "get",
+              "adm0_name"
+            ],
+            [
+              "get",
+              "gns_short_name"
+            ]
           ]
         ],
         "text-font": [
@@ -18082,7 +18316,10 @@
             "get",
             "status_cd"
           ],
-          1,
+          [
+            1,
+            98
+          ],
           true,
           false
         ],
@@ -18177,21 +18414,139 @@
           ]
         ],
         "text-field": [
-          "coalesce",
+          "step",
           [
-            "get",
-            "gns_short_name"
+            "zoom"
           ],
           [
-            "get",
-            "adm0_name"
+            "coalesce",
+            [
+              "get",
+              "nga_short_name"
+            ],
+            [
+              "get",
+              "gns_short_name"
+            ],
+            [
+              "get",
+              "adm0_name"
+            ]
+          ],
+          3,
+          [
+            "case",
+            [
+              "match",
+              [
+                "get",
+                "iso_3"
+              ],
+              [
+                "DOM",
+                "COD",
+                "BDI",
+                "RWA",
+                "CAF",
+                "SLE",
+                "CPV",
+                "GNB",
+                "GMB",
+                "DJI",
+                "GNQ",
+                "STP",
+                "NLD",
+                "LUX",
+                "CHE",
+                "BIH",
+                "MDA",
+                "MNE",
+                "MKD",
+                "JOR",
+                "LBN",
+                "ISR",
+                "KWT",
+                "BHR",
+                "AZE",
+                "TJK",
+                "ARE",
+                "BGD",
+                "GTM",
+                "HND",
+                "NIC",
+                "CRI",
+                "TTO",
+                "BRB",
+                "SUR",
+                "ATG",
+                "DMA",
+                "LCA",
+                "BHS"
+              ],
+              true,
+              false
+            ],
+            [
+              "get",
+              "nga_short_name"
+            ],
+            [
+              "coalesce",
+              [
+                "get",
+                "gns_short_name"
+              ],
+              [
+                "get",
+                "adm0_name"
+              ]
+            ]
+          ],
+          5,
+          [
+            "coalesce",
+            [
+              "get",
+              "gns_short_name"
+            ],
+            [
+              "get",
+              "adm0_name"
+            ]
           ]
         ],
         "text-font": [
-          "NGATopo_Cn_bld",
-          "NotoSansBold"
+          "match",
+          [
+            "get",
+            "status_cd"
+          ],
+          1,
+          [
+            "literal",
+            [
+              "NGATopo_Cn_bld",
+              "NotoSansBold"
+            ]
+          ],
+          [
+            "literal",
+            [
+              "NGATopo_reg",
+              "NotoSansRegular"
+            ]
+          ]
         ],
-        "text-transform": "uppercase",
+        "text-transform": [
+          "match",
+          [
+            "get",
+            "status_cd"
+          ],
+          1,
+          "uppercase",
+          "none"
+        ],
         "text-letter-spacing": [
           "interpolate",
           [
@@ -18295,7 +18650,16 @@
         "visibility": "visible"
       },
       "paint": {
-        "text-color": "rgba(130,130,130,1)",
+        "text-color": [
+          "match",
+          [
+            "get",
+            "status_cd"
+          ],
+          1,
+          "rgba(130,130,130,1)",
+          "rgba(153,153,153,1)"
+        ],
         "text-halo-color": "rgba(255,255,255,0.8)",
         "text-halo-width": [
           "step",
