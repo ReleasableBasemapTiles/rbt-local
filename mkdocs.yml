@@ -8,12 +8,16 @@ docs_dir: site-docs
 theme:
   name: material
 
+# Loaded by path. The mkdocs console script does not put the repo on sys.path,
+# so heading slugs cannot be imported from mkdocs.yml with a Python tag.
+hooks:
+  - scripts/pages_hooks.py
+
 # Setting markdown_extensions replaces MkDocs defaults, so tables stays
 # explicit. pymdownx.superfences covers fenced code blocks and Mermaid.
 markdown_extensions:
   - toc:
       permalink: true
-      slugify: !!python/name:scripts.prepare_pages.github_slug
   - tables
   - pymdownx.superfences:
       custom_fences:

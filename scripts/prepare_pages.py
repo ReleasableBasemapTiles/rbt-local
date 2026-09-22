@@ -17,17 +17,6 @@ LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)(\))")
 FENCE = re.compile(r"(^```.*?^```)", re.MULTILINE | re.DOTALL)
 
 
-def github_slug(value: str, separator: str = "-") -> str:
-    """Match GitHub heading anchors, including doubled hyphens.
-
-    GitHub drops punctuation and turns each remaining space into a hyphen,
-    so "PowerShell + Chocolatey" becomes ``powershell--chocolatey``.
-    """
-    text = value.strip().lower()
-    text = re.sub(r"[^\w\s-]", "", text, flags=re.ASCII)
-    return re.sub(r"\s", separator, text)
-
-
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
