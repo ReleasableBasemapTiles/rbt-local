@@ -52,8 +52,19 @@ def replace_unique(text: str, old: str, new: str, label: str) -> str:
     return text.replace(quoted_old, quoted_new, 1)
 
 
+def read_style_text(path: Path) -> str:
+    # Path.read_text(newline=...) is Python 3.13+. The runner is 3.12.
+    with path.open(encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def write_style_text(path: Path, text: str) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
 def rewrite_style(path: Path, label: str) -> None:
-    text = path.read_text(encoding="utf-8", newline="")
+    text = read_style_text(path)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -93,7 +104,7 @@ def rewrite_style(path: Path, label: str) -> None:
     if rewritten["sources"]["RBT"].get("type") != sources["RBT"].get("type"):
         raise SystemExit(f"{label}: sources.RBT.type changed")
 
-    path.write_text(text, encoding="utf-8", newline="")
+    write_style_text(path, text)
 
 
 def should_keep(existing: Path, dest_style: Path, keep: set[Path]) -> bool:
