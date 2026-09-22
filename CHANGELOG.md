@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Publish the guides on GitHub Pages (#16)
 
+### Fixed
+
+- Load heading slugs from a hook file (#17)
+
 ## [2.0.1] - 2026-09-22
 
 ### Changed
