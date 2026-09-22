@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Publish the guides on GitHub Pages (#16)
+
+## [2.0.1] - 2026-09-22
+
+### Changed
+
 - Update README to include release history and contribution guidelines
 - Sync matching styles from upstream
 - Sync matching styles from upstream (#15)
@@ -45,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix the --4087 stack silently ignoring mapproxy.4087.yaml
 
-[unreleased]: https://github.com/ReleasableBasemapTiles/rbt-local/compare/v2.0.0..HEAD
+[unreleased]: https://github.com/ReleasableBasemapTiles/rbt-local/compare/v2.0.1..HEAD
+[2.0.1]: https://github.com/ReleasableBasemapTiles/rbt-local/compare/v2.0.0..v2.0.1
 [2.0.0]: https://github.com/ReleasableBasemapTiles/rbt-local/releases/tag/v2.0.0
 
