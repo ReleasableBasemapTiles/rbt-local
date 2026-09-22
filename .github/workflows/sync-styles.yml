@@ -1,0 +1,76 @@
+# Copy the six styles already in tileserver/styles from
+# ReleasableBasemapTiles/styles main, skip svg folders, and rewrite
+# style.json URLs for local mbtiles serving. Opens a pull request when
+# anything changed.
+#
+# styles is private, so GITHUB_TOKEN cannot read it. Add a repo secret
+# named STYLES_REPO_TOKEN: a fine-grained PAT with Contents: Read on
+# ReleasableBasemapTiles/styles only. The pull request uses GITHUB_TOKEN,
+# so other Actions (including Lint PR) do not run on it.
+#
+#   gh workflow run sync-styles.yml
+
+name: Sync styles
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 13 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-styles
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Checkout upstream styles
+        uses: actions/checkout@v5
+        with:
+          repository: ReleasableBasemapTiles/styles
+          ref: main
+          path: upstream-styles
+          token: ${{ secrets.STYLES_REPO_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout: |
+            styles/RBT-BROWN
+            styles/RBT-DARK
+            styles/RBT-GRAY
+            styles/RBT-LIGHT
+            styles/RBT-OVERLAY
+            styles/RBT-TOPO
+          sparse-checkout-cone-mode: true
+
+      - name: Sync matching styles
+        run: python3 .github/scripts/sync-styles.py upstream-styles/styles tileserver/styles
+
+      - name: Remove upstream checkout
+        run: rm -rf upstream-styles
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/sync-styles
+          delete-branch: true
+          add-paths: tileserver/styles
+          commit-message: "chore(styles): sync matching styles from upstream"
+          title: "chore(styles): sync matching styles from upstream"
+          body: |
+            ## Summary
+            - Sync the styles already in `tileserver/styles` from `ReleasableBasemapTiles/styles` `main`
+            - Skip svg folders
+            - Rewrite `style.json` sources, sprite, and glyphs for local mbtiles serving
+
+            ## Test plan
+            - [ ] Confirm `style.json` uses `mbtiles://{RBT}`, `mbtiles://{TERRAIN}`, `{styleJsonFolder}/sprite`, and `{fontstack}/{range}.pbf`
+            - [ ] Confirm no svg directories were added under `tileserver/styles`

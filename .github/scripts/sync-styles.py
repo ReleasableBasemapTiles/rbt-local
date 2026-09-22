@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Copy matching tileserver styles from an upstream styles checkout.
+
+Only directories present in both trees are updated. Directories whose names
+contain "svg" are skipped. PNG filenames are lowercased so sprite.PNG replaces
+sprite.png. style.json source, sprite, and glyph URLs are rewritten in the
+original file text for this repo's tileserver.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+RBT_URL = "mbtiles://{RBT}"
+TERRAIN_URL = "mbtiles://{TERRAIN}"
+SPRITE = "{styleJsonFolder}/sprite"
+GLYPHS = "{fontstack}/{range}.pbf"
+
+
+def is_svg_dir(name: str) -> bool:
+    return "svg" in name.lower()
+
+
+def iter_files(root: Path):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not is_svg_dir(d)]
+        dirnames.sort()
+        for filename in sorted(filenames):
+            yield Path(dirpath) / filename
+
+
+def normalized_rel(path: Path, root: Path) -> Path:
+    rel = path.relative_to(root)
+    if rel.suffix.lower() == ".png":
+        return rel.with_suffix(".png")
+    return rel
+
+
+def replace_unique(text: str, old: str, new: str, label: str) -> str:
+    if old == new:
+        return text
+    quoted_old = json.dumps(old)
+    quoted_new = json.dumps(new)
+    count = text.count(quoted_old)
+    if count != 1:
+        raise SystemExit(f"{label}: {old!r} appears {count} times, expected 1")
+    return text.replace(quoted_old, quoted_new, 1)
+
+
+def rewrite_style(path: Path, label: str) -> None:
+    text = path.read_text(encoding="utf-8", newline="")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{label}: style.json is not valid JSON ({exc})") from exc
+
+    sources = data.get("sources")
+    if not isinstance(sources, dict):
+        raise SystemExit(f"{label}: style.json has no sources object")
+
+    for name in ("RBT", "TERRAIN"):
+        source = sources.get(name)
+        if not isinstance(source, dict) or not isinstance(source.get("url"), str):
+            raise SystemExit(f"{label}: style.json is missing sources.{name}.url")
+
+    for key in ("sprite", "glyphs"):
+        if not isinstance(data.get(key), str):
+            raise SystemExit(f"{label}: style.json is missing {key}")
+
+    original_terrain = dict(sources["TERRAIN"])
+    text = replace_unique(text, sources["RBT"]["url"], RBT_URL, f"{label} sources.RBT.url")
+    text = replace_unique(
+        text, sources["TERRAIN"]["url"], TERRAIN_URL, f"{label} sources.TERRAIN.url"
+    )
+    text = replace_unique(text, data["sprite"], SPRITE, f"{label} sprite")
+    text = replace_unique(text, data["glyphs"], GLYPHS, f"{label} glyphs")
+
+    rewritten = json.loads(text)
+    terrain = rewritten["sources"]["TERRAIN"]
+    if rewritten["sources"]["RBT"]["url"] != RBT_URL or terrain["url"] != TERRAIN_URL:
+        raise SystemExit(f"{label}: source URLs were not rewritten")
+    if rewritten["sprite"] != SPRITE or rewritten["glyphs"] != GLYPHS:
+        raise SystemExit(f"{label}: sprite or glyphs were not rewritten")
+    if terrain.get("tileSize") != original_terrain.get("tileSize"):
+        raise SystemExit(f"{label}: sources.TERRAIN.tileSize changed")
+    if terrain.get("encoding") != original_terrain.get("encoding"):
+        raise SystemExit(f"{label}: sources.TERRAIN.encoding changed")
+    if rewritten["sources"]["RBT"].get("type") != sources["RBT"].get("type"):
+        raise SystemExit(f"{label}: sources.RBT.type changed")
+
+    path.write_text(text, encoding="utf-8", newline="")
+
+
+def should_keep(existing: Path, dest_style: Path, keep: set[Path]) -> bool:
+    rel = existing.relative_to(dest_style)
+    if rel in keep:
+        return True
+    if rel.suffix.lower() != ".png":
+        return False
+    normalized = rel.with_suffix(".png")
+    if normalized not in keep:
+        return False
+    kept = dest_style / normalized
+    return kept.exists() and existing.samefile(kept)
+
+
+def prune_empty_dirs(root: Path) -> None:
+    for dirpath, _dirnames, _filenames in os.walk(root, topdown=False):
+        current = Path(dirpath)
+        if current == root or is_svg_dir(current.name):
+            continue
+        if not any(current.iterdir()):
+            current.rmdir()
+
+
+def sync_style(upstream_style: Path, dest_style: Path) -> tuple[int, int]:
+    planned: dict[Path, Path] = {}
+    for source in iter_files(upstream_style):
+        rel = normalized_rel(source, upstream_style)
+        previous = planned.get(rel)
+        if previous is not None:
+            raise SystemExit(
+                f"{dest_style.name}: {previous.relative_to(upstream_style).as_posix()} "
+                f"and {source.relative_to(upstream_style).as_posix()} both map to {rel.as_posix()}"
+            )
+        planned[rel] = source
+
+    if Path("style.json") not in planned:
+        raise SystemExit(f"{dest_style.name}: upstream style has no style.json")
+
+    for rel, source in planned.items():
+        target = dest_style / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    rewrite_style(dest_style / "style.json", dest_style.name)
+
+    keep = set(planned)
+    removed = 0
+    for existing in list(iter_files(dest_style)):
+        if should_keep(existing, dest_style, keep):
+            continue
+        existing.unlink()
+        removed += 1
+
+    prune_empty_dirs(dest_style)
+    return len(planned), removed
+
+
+def style_dirs(root: Path) -> set[str]:
+    return {path.name for path in root.iterdir() if path.is_dir() and not is_svg_dir(path.name)}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("upstream", type=Path, help="Upstream styles directory (styles/)")
+    parser.add_argument("dest", type=Path, help="Local tileserver/styles directory")
+    args = parser.parse_args()
+
+    upstream = args.upstream.resolve()
+    dest = args.dest.resolve()
+    if not upstream.is_dir():
+        raise SystemExit(f"upstream styles directory not found: {upstream}")
+    if not dest.is_dir():
+        raise SystemExit(f"dest styles directory not found: {dest}")
+
+    upstream_names = style_dirs(upstream)
+    dest_names = style_dirs(dest)
+    for name in sorted(dest_names - upstream_names):
+        print(f"leave {name} (not in upstream checkout)")
+
+    matched = sorted(dest_names & upstream_names)
+    if not matched:
+        raise SystemExit("no matching styles to sync")
+
+    for name in matched:
+        copied, removed = sync_style(upstream / name, dest / name)
+        print(f"synced {name} ({copied} files, removed {removed})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
