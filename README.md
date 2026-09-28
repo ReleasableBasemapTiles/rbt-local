@@ -46,7 +46,7 @@ aws s3 cp s3://<rbt-bucket-path>/RBT.mbtiles tileserver/data/3857/ --profile rbt
 aws s3 cp s3://<terrain-bucket-path>/TERRAIN.mbtiles tileserver/data/3857/ --profile rbt
 ```
 
-The [EPSG:4087 deployment](docs/deployment-4087.md) also needs its own `RBT.mbtiles` and `TERRAIN.mbtiles` in `tileserver/data/4087/`. TileserverGL reads MBTiles only at startup, so after replacing them on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`): it restarts TileserverGL and empties nginx's tile cache.
+The [EPSG:4087 deployment](docs/deployment-4087.md) also needs its own `RBT.mbtiles` and `TERRAIN.mbtiles` in `tileserver/data/4087/`. TileserverGL reads MBTiles only at startup, so after replacing them on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` on that deployment): it restarts TileserverGL and empties nginx's tile cache.
 
 ## Quickstart
 

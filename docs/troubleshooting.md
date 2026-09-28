@@ -30,17 +30,23 @@ This means you need administrator privileges.
 
 ## "Cannot connect to AWS" Error
 
-- **Solution**: Make sure you've configured AWS CLI with `aws configure --profile rbt`
+- **Solution**: Make sure you've configured AWS CLI with `aws configure --profile rbt`, and that the download uses that profile: set `AWS_PROFILE=rbt` in `.env` for the deploy scripts (see [.env.example](../.env.example)), or add `--profile rbt` to `aws s3` commands you run yourself. `aws s3 ls s3://<bucket-path>/ --profile rbt` checks the credentials and the bucket path together.
 
 ## Every `/mapproxy/*` Request Returns a 502 Bad Gateway
 
-This means the `mapproxy` container isn't listening where nginx expects it (`mapproxy:5000`).
+This means nginx can't reach MapProxy at `mapproxy:5000`: the container is stopped, restarting, or still starting.
 
-- **Solution**: Run `docker compose logs mapproxy` and confirm uWSGI started and bound its socket. If you've modified `mapproxy/config/uwsgi.ini` or the `mapproxy` service in `docker-compose.yaml`, compare against this repository's defaults -- the image needs an explicit `uwsgi --ini /mapproxy/config/uwsgi.ini` command; its own default command starts a development-only server that doesn't match what nginx expects.
+- **Solution**: Run `docker compose ps mapproxy` and `docker compose logs mapproxy`. uWSGI exits when MapProxy can't load its configuration, and the log names the file and the error -- fix it, then run `docker compose up -d`. If you've modified `mapproxy/config/uwsgi.ini` (its `http-socket` must stay on port 5000) or the `mapproxy` service in `docker-compose.yaml`, compare against this repository's defaults.
 
 ## TileserverGL Shows No Styles, or Styles Render Blank
 
-- **Solution**: Confirm `tileserver/data/3857/TERRAIN.mbtiles` and `tileserver/data/3857/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/3857/`). A partial download loads without error but renders blank or incomplete tiles. (With `--4087`/`-Use4087`, also check `tileserver/data/4087/`.)
+- **Solution**: Confirm `tileserver/data/3857/TERRAIN.mbtiles` and `tileserver/data/3857/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/3857/`). A partial download loads without error but renders blank or incomplete tiles. (With `--4087`/`-Use4087`, also check `tileserver/data/4087/`.) After replacing a file, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`) so TileserverGL reopens it and nginx drops the blank tiles it cached -- see the next section.
+
+## Maps Still Show Old Data or an Old Style
+
+nginx keeps each map image it serves for 30 days (see [Tile Caching](architecture.md#tile-caching)), and TileserverGL reads MBTiles and styles only at startup, so neither notices when you replace them.
+
+- **Solution**: Run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`), adding `--4087`/`-Use4087` for the EPSG:4087 deployment: it restarts TileserverGL and empties nginx's cache. Browsers and GIS clients keep their own tile caches too -- reload without them (Ctrl+Shift+R in a browser, or clear QGIS's network cache under **Settings -> Options -> Network**).
 
 ## The 4087 Stack Is Up, but EPSG:4326 Tiles Look Unchanged
 
@@ -67,11 +73,11 @@ This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../doc
 
   On the Helm chart, use the `head -1` check in [Deploying to OpenShift](deployment-openshift.md#verifying-its-working) instead.
 
-## `mapproxy` Container Exits, or Can't Write Its Cache
+## `mapproxy` Container Exits, or Can't Write Its Lock Files
 
 On **Linux or WSL2**, this is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
 
-- **Solution (Linux/WSL2)**: Re-run the `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks` step from the [Linux](install-linux.md) or [Windows WSL2](install-windows.md#option-b-wsl2) setup instructions, then `docker compose restart mapproxy`.
+- **Solution (Linux/WSL2)**: Re-run the permissions step (`mkdir -p mapproxy/data`, then `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks`) from the [Linux](install-linux.md) or [Windows WSL2](install-windows.md#option-b-wsl2) setup instructions, or `./deploy.sh --perm`, then `docker compose restart mapproxy`. If the log shows a configuration error instead, see the 502 section above.
 - **Solution (macOS or native Windows)**: There's no uid/gid mismatch to fix here -- Docker Desktop's VM writes to bind-mounted host directories regardless of host file permissions/ACLs. Instead, run `docker compose logs mapproxy` and check Docker Desktop's **Settings -> Resources -> File sharing** includes the drive/volume you cloned this repository onto.
 
 ## Windows (WSL2): Containers Are Extremely Slow, or Permission Changes Don't Stick

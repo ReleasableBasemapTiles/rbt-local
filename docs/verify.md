@@ -36,12 +36,20 @@ Expect: an XML document starting with `<Capabilities` that lists one layer per s
 curl -sD - -o /dev/null "http://localhost:8082/mapproxy/wms?SERVICE=WMS&REQUEST=GetMap&VERSION=1.1.1&LAYERS=rbt_topo_3857&STYLES=&SRS=EPSG:3857&BBOX=-20037508.34,-20037508.34,20037508.34,20037508.34&WIDTH=256&HEIGHT=256&FORMAT=image/png"
 ```
 
-Expect: `HTTP/1.1 200 OK` with an `X-Cache-Status: MISS` header on this first request, since MapProxy has to fetch from TileserverGL and cache the result. Run the exact same command again -- the second response should show `X-Cache-Status: HIT`, confirming nginx served it from cache without asking MapProxy again. (Use `curl -sD -` rather than `curl -sI` here -- a HEAD request is a different request method and some WMS servers, MapProxy included, respond to it with an error rather than an actual capabilities-appropriate response.)
+Expect: `HTTP/1.1 200 OK` and `Content-Type: image/png`, with an `X-Cache-Status: MISS` header on this first request: nginx passed it to MapProxy, which had TileserverGL render the tile. Run the exact same command again -- the second response should show `X-Cache-Status: HIT`, confirming nginx served it from its cache without asking MapProxy again (see [Tile Caching](architecture.md#tile-caching)). (`curl -sD - -o /dev/null` prints the headers of an ordinary GET request; `curl -I` would send a HEAD request instead.)
 
 If you'd rather check by eye: open `http://localhost:8082/tileservergl/` in a browser to see the TileserverGL style previews. Direct (bypassing nginx entirely) access is also available on each service's own port:
 
 - TileserverGL: `http://localhost:8080`
 - MapProxy: `http://localhost:8081/wmts/1.0.0/WMTSCapabilities.xml`
+
+## Other deployments
+
+The checks above are for the default deployment. For the others (see [Deployment Options](../README.md#deployment-options)):
+
+- **Without nginx** (`--no-nginx`/`-NoNginx`): `docker compose -f docker-compose.yaml ps` lists only `mapproxy` and `tileservergl`. Nothing listens on port 8082, so skip `/healthz` and run the other checks against each service's own port, without the path prefix -- `http://localhost:8080/styles.json` and `http://localhost:8081/wmts/1.0.0/WMTSCapabilities.xml`, say. Responses have no `X-Cache-Status` header, since nothing is cached.
+- **EPSG:4087** (`--4087`/`-Use4087`): run `docker compose ps` with the same `-f` flags you deployed with; it also lists `tileservergl4087`. Then check that MapProxy loaded `mapproxy.4087.yaml` -- see [Verifying it's working](deployment-4087.md#verifying-its-working) in the EPSG:4087 guide.
+- **Helm**: see [Verifying it's working](deployment-openshift.md#verifying-its-working) in the OpenShift guide.
 
 ## Next steps
 

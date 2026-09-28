@@ -10,9 +10,8 @@ Open **Terminal** and run:
 # Install Homebrew (skip this if `brew --version` already works)
 NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Install AWS CLI v2, Git, and Git LFS
-brew install awscli git git-lfs
-git lfs install --global
+# Install AWS CLI v2 and Git
+brew install awscli git
 
 # Install Docker Desktop
 brew install --cask docker-desktop
@@ -32,18 +31,17 @@ docker compose version
 ## Step 3: Clone the repository
 
 ```bash
-git lfs install
-git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git
+git clone https://github.com/ReleasableBasemapTiles/rbt-local.git
 cd rbt-local
 ```
 
 ## Step 4: Download the map data and start RBT
 
-Unlike Linux, there's no `chown`/`chmod` permissions step here -- Docker Desktop's VirtioFS file sharing maps your host user into the container regardless of macOS file permissions, so the runtime directories (`mapproxy/data`, `nginx/cache`, etc.) just need to exist.
+Unlike Linux, there's no `chown`/`chmod` permissions step here -- Docker Desktop's VirtioFS file sharing maps your host user into the container regardless of macOS file permissions, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first, as described in [Downloading the map data by hand](../README.md#downloading-the-map-data-by-hand) in the main README.
 
 ```bash
-# Download the map data (see "Get S3 Credentials" in the main README) before
-# continuing, then start the RBT stack from the rbt-local directory
+# Download the map data (see "Downloading the map data by hand" in the main
+# README), then start the RBT stack from the rbt-local directory
 docker compose up -d
 
 # Check logs
@@ -55,7 +53,7 @@ docker compose down --remove-orphans
 
 ## A note on Apple Silicon vs. Intel
 
-Both container images this stack uses (`maptiler/tileserver-gl` and `ghcr.io/mapproxy/mapproxy/mapproxy`) publish `linux/amd64` and `linux/arm64` builds, so Docker Desktop pulls the right one automatically on both Apple Silicon and Intel Macs -- no configuration needed.
+The `maptiler/tileserver-gl` and `nginx` images publish `linux/amd64` and `linux/arm64` builds, so Docker Desktop pulls the right one automatically on both Apple Silicon and Intel Macs, and it builds the MapProxy image from [`Dockerfile.mapproxy`](../Dockerfile.mapproxy) for your Mac's architecture -- no configuration needed.
 
 ## A note on the macOS Firewall
 

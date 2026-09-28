@@ -12,7 +12,7 @@ RBT exposes the following endpoints for GIS client connections through a unified
 
 - **WMS**: `http://localhost:8082/mapproxy/wms`
 - **WMTS**: `http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml`
-- These provide cached raster tiles in standard OGC formats
+- Raster map images in standard OGC formats, cached by nginx when you connect through port 8082
 - Compatible with virtually all GIS software
 
 ### 2. TileserverGL Services - For Modern GIS Clients
@@ -44,7 +44,7 @@ This is also what powers the nginx-free deployment described in [Advanced: Deplo
    - For production, replace `localhost:8082` with your deployment URL
 4. Click **OK**, then click **Connect**
 5. Select the available layers and click **Add**
-6. The MapProxy layers will be added to your map with optimal caching performance
+6. The MapProxy layers are added to your map
 
 ### From ArcGIS Pro
 
@@ -56,6 +56,8 @@ This is also what powers the nginx-free deployment described in [Advanced: Deplo
 4. Expand the WMTS server connection and drag the desired layer to your map
 
 ## Connecting to TileserverGL WMTS (For Style Flexibility)
+
+The screenshots below come from an earlier, remote deployment, so they show its hostname and an old style ID, `RBT-TLM-3395`. On this stack the WMTS URL looks like `http://localhost:8082/tileservergl/styles/RBT-TOPO/wmts.xml`, with a style ID from [Available Styles](#available-styles-in-tileservergl), and every TileserverGL style is EPSG:3857.
 
 ### From QGIS
 
@@ -138,7 +140,7 @@ Based on the [TileserverGL documentation](https://tileserver.readthedocs.io/en/l
 
 - **Use MapProxy endpoints** (`/mapproxy/*`) when:
   - You need maximum compatibility with older GIS software
-  - You want cached tiles for better performance
+  - You need EPSG:3395 or EPSG:4326, or a WMS
   - You're using standard OGC protocols (WMS/WMTS)
 - **Use TileserverGL endpoints** (`/tileservergl/*`) when:
   - You want vector tiles for dynamic styling
@@ -149,7 +151,7 @@ Based on the [TileserverGL documentation](https://tileserver.readthedocs.io/en/l
 
 - Single port for all services simplifies firewall rules
 - Consistent URL structure for all endpoints
-- Nginx provides additional caching and performance optimization
+- nginx caches rendered map images for 30 days (see [Tile Caching](architecture.md#tile-caching)) and compresses text responses
 - Easier to implement SSL/TLS for all services
 - Simplified proxy configuration for enterprise environments
 
@@ -162,7 +164,7 @@ Based on the [TileserverGL documentation](https://tileserver.readthedocs.io/en/l
 - **RBT-DARK**: Dark theme style
 - **RBT-OVERLAY**: Overlay style for use with imagery
 
-Visit the TileserverGL interface to see all available styles and their previews. Screenshots elsewhere in this guide may still show older `-3395` style identifiers (e.g. `RBT-TOPO-3395`); TileserverGL renders every style in EPSG:3857, so those styles were renamed to drop the `-3395` suffix. EPSG:3395 and EPSG:4326 are still available -- MapProxy reprojects both, as described below.
+Visit the TileserverGL interface to see all available styles and their previews. TileserverGL renders every style in EPSG:3857; for EPSG:3395 or EPSG:4326, use MapProxy's layers below.
 
 ## Available Layers in MapProxy
 
@@ -187,7 +189,7 @@ Over WMTS, each layer is offered in one TileMatrixSet -- `webmercator` for the `
 
 1. **Connection Failed**: Ensure Docker containers are running (`docker ps`), and check that your firewall allows connections on port 8082 (or 8080/8081 if bypassing nginx)
 2. **No Layers Visible**: Check that you've downloaded the map data (see the main README's [Get S3 Credentials](../README.md#get-s3-credentials)) and check Docker logs: `docker compose logs`
-3. **Slow Performance**: Use MapProxy endpoints for cached tiles
+3. **Slow Performance**: Connect through nginx (port 8082), which caches the map images it serves. The first request for each tile is always slower, while TileserverGL renders it
 4. **Style Issues**: Vector tiles require GIS client support for MapLibre styles
 5. **Projection Issues**: TileserverGL serves EPSG:3857 (Web Mercator) only, so set your QGIS/ArcGIS project CRS to EPSG:3857 when connecting to it (or let the client reproject on the fly). MapProxy is the one to use if you need another projection -- see [Available Layers in MapProxy](#available-layers-in-mapproxy) above for the EPSG:3395 and EPSG:4326 layers and the full list of SRS its WMS accepts
 

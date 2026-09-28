@@ -1,21 +1,21 @@
 # Advanced: The EPSG:4087 Dual-TileserverGL Deployment
 
-The default stack ([docker-compose.yaml](../docker-compose.yaml)) runs one TileserverGL container serving EPSG:3857 (Web Mercator) MBTiles, and MapProxy reprojects from that single EPSG:3857 cache to build its EPSG:3395 and EPSG:4326 caches (see [Architecture](architecture.md)).
+The default stack ([docker-compose.yaml](../docker-compose.yaml)) runs one TileserverGL container serving EPSG:3857 (Web Mercator) MBTiles, and MapProxy builds its EPSG:3395 and EPSG:4326 layers by reprojecting those EPSG:3857 tiles (see [Architecture](architecture.md)).
 
-[`docker-compose.4087.yaml`](../docker-compose.4087.yaml) is an overlay on `docker-compose.yaml` that adds a **second** TileserverGL container serving EPSG:4087 (World Equidistant Cylindrical) MBTiles, and repoints MapProxy's EPSG:4326 caches to reproject from that EPSG:4087 cache instead of the EPSG:3857 one. Everything else -- the EPSG:3857 and EPSG:3395 caches/layers, the client-facing layer list, nginx, ports -- stays the same.
+[`docker-compose.4087.yaml`](../docker-compose.4087.yaml) is an overlay on `docker-compose.yaml` that adds a **second** TileserverGL container serving EPSG:4087 (World Equidistant Cylindrical) MBTiles, and repoints MapProxy's EPSG:4326 layers to reproject from those EPSG:4087 tiles instead of the EPSG:3857 ones. Everything else -- the EPSG:3857 and EPSG:3395 layers, the client-facing layer list, nginx, ports -- stays the same.
 
 ## Why this improves EPSG:4326 output
 
 EPSG:3857 (Web Mercator) is angularly distorted away from the equator, so reprojecting it to EPSG:4326 (a linear lat/lon grid) resamples nonlinearly -- the further from the equator, the more the pixels are stretched and resampled.
 
-EPSG:4087 shares EPSG:4326's linear scaling: one degree of latitude or longitude always covers the same number of meters, everywhere on the globe. Its level-0 resolution (`40075016.685578488 m / 512 px = 78271.517 m/px`) is identical to the `geodetic` grid's level-0 resolution (`360deg / 1024 px = 0.703125 deg/px`, which is also `78271.517 m/px`) at every zoom level. Reprojecting EPSG:4087 to EPSG:4326 is therefore a pure unit conversion with no resampling distortion, unlike the EPSG:3857-to-EPSG:4326 hop the default stack uses.
+EPSG:4087 shares EPSG:4326's linear scaling: one degree of latitude or longitude always covers the same number of meters, everywhere on the globe. Its level-0 resolution (`40075016.685578488 m / 512 px = 78271.517 m/px`) is identical to the `geodetic` grid's level-0 resolution (`360deg / 512 px = 0.703125 deg/px`, which is also `78271.517 m/px`), and both halve at every zoom level. Reprojecting EPSG:4087 to EPSG:4326 is therefore a pure unit conversion with no resampling distortion, unlike the EPSG:3857-to-EPSG:4326 hop the default stack uses.
 
 ## What's different
 
 - A second TileserverGL container, `tileservergl4087`, mounts `tileserver/data/4087` at `/data` -- the existing `tileservergl` container mounts `tileserver/data/3857` the same way -- while both share the same `tileserver/fonts`, `tileserver/styles`, and `tileserver/config/config.json`. The EPSG:4087 MBTiles must keep the filenames `RBT.mbtiles` and `TERRAIN.mbtiles`, since both containers read the same `config.json`.
 - MapProxy loads [mapproxy/config/mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml) instead of `mapproxy.yaml`: the overlay sets the `mapproxy` service's `MAPPROXY_CONFIG` environment variable, which the image's WSGI entry point ([mapproxy/docker/app.py](../mapproxy/docker/app.py)) reads. `mapproxy.4087.yaml` starts with `base: mapproxy.yaml`, so MapProxy merges it over the regular config, and it only holds the differences: an `equidistant_4087` grid, six `rbt_*_4087_cache`/`rbt_*_4087_source` pairs sourced from `tileservergl4087`, and a new `sources` for each `rbt_*_4326_cache` (the matching `rbt_*_4087_cache` instead of `rbt_*_3857_cache`). A change to `mapproxy.yaml` applies to both stacks.
 - The EPSG:4087 caches are internal only -- MapProxy still publishes the same 18 layers (six styles x EPSG:3857/3395/4326) as the default stack. No client-visible URL changes.
-- The optional nginx service ([docker-compose.override.yaml](../docker-compose.override.yaml)) gains a `/tileservergl4087/` path for previewing the second container's styles directly, alongside the existing `/tileservergl/` and `/mapproxy/` paths.
+- The optional nginx service ([docker-compose.override.yaml](../docker-compose.override.yaml)) serves the second container's style previews at `/tileservergl4087/`, alongside the existing `/tileservergl/` and `/mapproxy/` paths. After replacing MBTiles or styles, `./deploy.sh --4087 --refresh` (or `.\deploy.ps1 -Use4087 -Refresh`) restarts both TileserverGL containers and empties nginx's cache.
 
 ## Deploying
 
