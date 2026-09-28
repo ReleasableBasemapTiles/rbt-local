@@ -1,0 +1,41 @@
+# Weekly version updates: the GitHub Actions, Dockerfile.mapproxy's base
+# image, the images the Compose files pin, and the docs toolchain
+# (requirements-docs.txt). Commit messages and PR titles get Conventional
+# Commit prefixes, e.g. "ci(deps): bump ...", for Lint PR (see
+# CONTRIBUTING.md); commitlint.config.mjs skips the bodies' long lines.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+      include: scope

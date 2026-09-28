@@ -92,7 +92,7 @@ Without an SCC to inject `runAsUser`, `runAsNonRoot: true` (the default) makes t
 
 ## Why `charts/rbt/files/` duplicates repo-root configs
 
-Helm's `.Files.Get` can only read files inside the chart directory, and its loader skips symlinks -- so `charts/rbt/files/mapproxy/*` and `charts/rbt/files/tileserver/config.json` are plain copies of `mapproxy/config/*` and `tileserver/config/config.json`, not references to them. Run `./charts/rbt/sync-files.sh` after editing any of those five source files, then re-run `helm template`/`helm lint` to confirm the change took effect; `./charts/rbt/sync-files.sh --check` diffs instead of copying (non-zero exit on drift), for a future CI gate.
+Helm's `.Files.Get` can only read files inside the chart directory, and its loader skips symlinks -- so `charts/rbt/files/mapproxy/*` and `charts/rbt/files/tileserver/config.json` are plain copies of `mapproxy/config/*` and `tileserver/config/config.json`, not references to them. Run `./charts/rbt/sync-files.sh` after editing any of those five source files, then re-run `helm template`/`helm lint` to confirm the change took effect; `./charts/rbt/sync-files.sh --check` diffs instead of copying (non-zero exit on drift), which CI runs on every pull request.
 
 `mapproxy.yaml`/`mapproxy.4087.yaml`'s hardcoded `http://tileservergl:8080/...`/`http://tileservergl4087:8080/...` source URLs *are* rewritten at template time (see `templates/configmap-mapproxy.yaml`) to whatever `tileservers.epsg3857/epsg4087.serviceName`/`containerPort` are actually set to -- that part doesn't need hand-editing after a sync.
 

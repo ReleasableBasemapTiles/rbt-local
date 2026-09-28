@@ -1,0 +1,129 @@
+# Checks for pull requests and main: the shell and PowerShell scripts, every
+# Compose stack, nginx.conf, JSON files, MapProxy's configs and the Helm
+# chart. The docs build runs in pages.yml, and the MapProxy image build in
+# mapproxy-image.yml. CONTRIBUTING.md lists the same checks to run locally.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: ShellCheck
+        run: shellcheck deploy.sh charts/rbt/sync-files.sh charts/rbt/files/scripts/fetch-s3.sh .githooks/commit-msg
+
+      - name: Parse deploy.ps1
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/deploy.ps1", [ref]$tokens, [ref]$errors)
+          foreach ($e in $errors) {
+            Write-Output "::error file=deploy.ps1,line=$($e.Extent.StartLineNumber)::$($e.Message)"
+          }
+          if ($errors) { exit 1 }
+
+  compose:
+    name: Compose and nginx
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate each Compose stack
+        run: |
+          check() {
+            local args=() file
+            for file in "$@"; do args+=(-f "$file"); done
+            echo "docker compose ${args[*]} config"
+            docker compose "${args[@]}" config --quiet
+          }
+          check docker-compose.yaml
+          check docker-compose.yaml docker-compose.override.yaml
+          check docker-compose.yaml docker-compose.4087.yaml
+          check docker-compose.yaml docker-compose.4087.yaml docker-compose.override.yaml
+
+      # With the nginx image docker-compose.override.yaml pins. mapproxy and
+      # tileservergl always exist when nginx starts; tileservergl4087 only in
+      # the 4087 stack, so nginx.conf must not need its address at startup.
+      - name: nginx -t
+        run: |
+          image="$(docker compose -f docker-compose.yaml -f docker-compose.override.yaml config --images | grep '^nginx:')"
+          docker run --rm \
+            --add-host mapproxy:127.0.0.1 \
+            --add-host tileservergl:127.0.0.1 \
+            -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            "$image" nginx -t
+
+  configs:
+    name: JSON and MapProxy configs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Parse JSON files
+        run: |
+          git ls-files '*.json' | while IFS= read -r file; do
+            python3 -m json.tool "$file" > /dev/null || { echo "::error file=$file::invalid JSON"; exit 1; }
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Install MapProxy
+        # The version Dockerfile.mapproxy installs.
+        run: pip install "MapProxy==$(sed -n 's/^ARG MAPPROXY_VERSION=//p' Dockerfile.mapproxy)"
+
+      - name: Load the repo and chart configs
+        run: python .github/scripts/check-mapproxy-config.py
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Chart files match the repo configs
+        run: ./charts/rbt/sync-files.sh --check
+
+      - name: Lint and render
+        run: |
+          check() {
+            echo "::group::helm lint/template $*"
+            helm lint --strict charts/rbt "$@"
+            helm template ci charts/rbt "$@" > /dev/null
+            echo "::endgroup::"
+          }
+          check
+          check --set tileservers.epsg4087.enabled=false
+          check --set networkPolicy.enabled=true --set tileservers.epsg4087.route.enabled=true

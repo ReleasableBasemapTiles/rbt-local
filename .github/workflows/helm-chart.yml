@@ -1,8 +1,9 @@
 # Package charts/rbt and push it to this repository's GHCR as an OCI
-# artifact. helm push infers name/tag from Chart.yaml (rbt / 0.1.0):
-#   oci://ghcr.io/releasablebasemaptile/rbt-local/rbt:0.2.0
+# artifact. helm push takes the name and tag from Chart.yaml's name and
+# version:
+#   oci://ghcr.io/releasablebasemaptiles/rbt-local/rbt:<version>
 #
-#   helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.2.0
+#   helm install rbt oci://ghcr.io/releasablebasemaptiles/rbt-local/rbt --version <version>
 #
 # This repo is private, so the package is private -- `helm registry login
 # ghcr.io` with a PAT that has `read:packages` before install.
