@@ -60,6 +60,8 @@ Squash-merging uses the **PR title** as the commit on `main`, which is the line 
 
 Do not edit `CHANGELOG.md` by hand for ordinary work. After merge (or after you push a `v*` tag), the Changelog workflow rewrites the file, commits `chore(changelog): update CHANGELOG.md`, and re-runs the Pages workflow, so the docs site's [Release notes](https://releasablebasemaptiles.github.io/rbt-local/release-notes/) page matches the file.
 
+A squash merge copies the message of every commit on the branch into the commit on `main`. If any of them contains `[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]` or `[actions skip]`, even in passing, GitHub starts none of the workflows for that merge, this one and Pages included. Leave the brackets off when a message has to mention one. If a merge was skipped, run the Changelog workflow from the Actions tab: it updates the file and re-runs Pages.
+
 GitHub Releases are still created by hand (`gh release create`). Repo tags like `v2.0.0` are the changelog versions; they are independent of the Helm chart's version (in `charts/rbt/Chart.yaml`) and the MapProxy image tag (`7.0.0`).
 
 ## Local commit-msg hook (optional)
