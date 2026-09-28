@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the guides on GitHub Pages ([#16](https://github.com/ReleasableBasemapTiles/rbt-local/pull/16))
 - Add a release notes page to the docs site ([#20](https://github.com/ReleasableBasemapTiles/rbt-local/pull/20))
 - Bump the github-actions group with 6 updates ([#19](https://github.com/ReleasableBasemapTiles/rbt-local/pull/19))
+- Let the changelog workflow run by hand ([#21](https://github.com/ReleasableBasemapTiles/rbt-local/pull/21))
 
 ### Fixed
 
