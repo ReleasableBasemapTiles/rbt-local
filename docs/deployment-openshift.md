@@ -1,6 +1,6 @@
 # Advanced: Deploying to OpenShift with Helm
 
-The deployments elsewhere in this repo ([README.md](../README.md), [docs/advanced-deployment.md](advanced-deployment.md), [docs/deployment-4087.md](deployment-4087.md)) all run on a single Docker host via Compose. [`charts/rbt`](../charts/rbt) is a Helm chart that deploys the same three containers to a Kubernetes/OpenShift cluster instead: MapProxy plus two TileserverGL instances (EPSG:3857 and EPSG:4087), **with no nginx** -- the cluster equivalent of `docker compose -f docker-compose.4087.yaml up -d` (see [deployment-4087.md](deployment-4087.md) for why EPSG:4087 improves EPSG:4326 output, and [advanced-deployment.md](advanced-deployment.md) for why skipping nginx is a supported, documented configuration rather than a workaround).
+The deployments elsewhere in this repo ([README.md](../README.md), [docs/advanced-deployment.md](advanced-deployment.md), [docs/deployment-4087.md](deployment-4087.md)) all run on a single Docker host via Compose. [`charts/rbt`](../charts/rbt) is a Helm chart that deploys the same three containers to a Kubernetes/OpenShift cluster instead: MapProxy plus two TileserverGL instances (EPSG:3857 and EPSG:4087), **with no nginx** -- the cluster equivalent of `docker compose -f docker-compose.yaml -f docker-compose.4087.yaml up -d` (see [deployment-4087.md](deployment-4087.md) for why EPSG:4087 improves EPSG:4326 output, and [advanced-deployment.md](advanced-deployment.md) for why skipping nginx is a supported, documented configuration rather than a workaround).
 
 This chart targets OpenShift's `restricted-v2` Security Context Constraint specifically. It also renders on plain Kubernetes, with one caveat covered in [charts/rbt/README.md#vanilla-kubernetes-without-an-scc](../charts/rbt/README.md#vanilla-kubernetes-without-an-scc).
 
@@ -16,7 +16,7 @@ flowchart LR
     svcMP["Service<br/>&lt;release&gt;-mapproxy :5000"]
     svcTS["Service<br/>tileservergl :8080"]
     svcTS87["Service<br/>tileservergl4087 :8080<br/>(ClusterIP only)"]
-    mapproxy["Deployment mapproxy<br/>runs mapproxy.4087.yaml"]
+    mapproxy["Deployment mapproxy<br/>runs mapproxy.4087.yaml + mapproxy.yaml"]
     ts3857["Deployment epsg3857<br/>+ PVC (RBT/TERRAIN mbtiles, EPSG:3857)"]
     ts4087["Deployment epsg4087<br/>+ PVC (RBT/TERRAIN mbtiles, EPSG:4087)"]
   end
@@ -39,10 +39,20 @@ Both TileserverGL Deployments also run a `fetch-s3` init container (downloading 
 
 ## Deploying
 
-1. **Install the chart**, pointing it at your S3 buckets. From a checkout of this repo (`charts/rbt`), or from GHCR after [`.github/workflows/helm-chart.yml`](../.github/workflows/helm-chart.yml) publishes it (`helm registry login ghcr.io` first -- the package is private):
+1. **Create a pull secret for the MapProxy image.** It's a private GHCR package, so give the cluster a GitHub token with the `read:packages` scope:
 
    ```bash
-   helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.2.0 \
+   oc create secret docker-registry ghcr-pull \
+     --docker-server=ghcr.io \
+     --docker-username=<github-user> \
+     --docker-password=<token>
+   ```
+
+2. **Install the chart**, pointing it at your S3 buckets. From GHCR, where [`.github/workflows/helm-chart.yml`](../.github/workflows/helm-chart.yml) publishes it (`helm registry login ghcr.io` first -- the package is private):
+
+   ```bash
+   helm install rbt oci://ghcr.io/releasablebasemaptiles/rbt-local/rbt --version 0.3.0 \
+     --set 'imagePullSecrets[0].name=ghcr-pull' \
      --set s3.accessKeyId=<key> \
      --set s3.secretAccessKey=<secret> \
      --set s3.fontsUri=s3://my-bucket/fonts \
@@ -57,6 +67,7 @@ Both TileserverGL Deployments also run a `fetch-s3` init container (downloading 
 
    ```bash
    helm install rbt charts/rbt \
+     --set 'imagePullSecrets[0].name=ghcr-pull' \
      --set s3.accessKeyId=<key> \
      --set s3.secretAccessKey=<secret> \
      --set s3.fontsUri=s3://my-bucket/fonts \
@@ -69,7 +80,7 @@ Both TileserverGL Deployments also run a `fetch-s3` init container (downloading 
 
    See [charts/rbt/values.yaml](../charts/rbt/values.yaml) for every available key (Route hostnames, PVC sizes, resource requests/limits, etc.) -- a `-f myvalues.yaml` file is easier to manage than a long `--set` list for anything beyond a first try.
 
-2. **Watch the rollout.** The first one takes a while -- each TileserverGL pod's `fetch-s3` init container downloads the MBTiles and fonts/styles from S3 before its main container even starts:
+3. **Watch the rollout.** The first one takes a while -- each TileserverGL pod's `fetch-s3` init container downloads the MBTiles and fonts/styles from S3 before its main container even starts:
 
    ```bash
    oc get pods -w
@@ -91,22 +102,22 @@ oc get pods
 Expect every pod `Running` and `1/1`+ `Ready` -- TileserverGL pods can take a few minutes to pass their `startupProbe` while they open the MBTiles files, the same way their Compose healthcheck does (see [docs/verify.md](verify.md)).
 
 ```bash
-helm test rbt
+helm test rbt --logs
 ```
 
-Expect `Phase: Succeeded` -- this fetches WMTS capabilities from MapProxy in-cluster (see [charts/rbt/templates/tests/test-connection.yaml](../charts/rbt/templates/tests/test-connection.yaml)).
+Expect `Phase: Succeeded` and a final `OK` -- in-cluster, this fetches MapProxy's WMTS capabilities plus one EPSG:3857 and one EPSG:4326 tile, so it also fails when MapProxy can't reach a TileserverGL instance (see [charts/rbt/templates/tests/test-connection.yaml](../charts/rbt/templates/tests/test-connection.yaml)).
 
 ```bash
 oc exec deploy/rbt-mapproxy -- head -1 /mapproxy/config/mapproxy.yaml
 ```
 
-Expect `# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its` -- same silent-fallback failure mode as the Compose deployment (see [troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged](troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged)), just checked via `oc exec` instead of `docker exec`. With `tileservers.epsg4087.enabled=false`, expect `services:` instead.
+Expect `# EPSG:4087 overlay on mapproxy.yaml, for the dual-TileserverGL stack (see`: the chart ships `mapproxy.4087.yaml` as `mapproxy.yaml`, the file the image loads, and the plain config it builds on as `mapproxy.base.yaml` (see [charts/rbt/README.md](../charts/rbt/README.md#why-chartsrbtfiles-duplicates-repo-root-configs)). With `tileservers.epsg4087.enabled=false`, expect `services:` instead. If EPSG:4326 tiles still look wrong, see [troubleshooting.md](troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged).
 
 ```bash
 curl -fsS "https://$(oc get route rbt-mapproxy -o jsonpath='{.spec.host}')/wmts/1.0.0/WMTSCapabilities.xml" | head -20
 ```
 
-Expect an XML document starting with `<Capabilities` -- see [docs/verify.md](verify.md) for the full list of layers it should mention and an equivalent WMS `GetMap` check. Note there's no nginx response cache here, so unlike that guide's `X-Cache-Status` check, every request either hits MapProxy's own GeoPackage tile cache or renders fresh from TileserverGL -- there's no separate front-end cache layer to verify.
+Expect an XML document starting with `<Capabilities` -- see [docs/verify.md](verify.md) for the full list of layers it should mention and an equivalent WMS `GetMap` check. Note there's no tile cache here, so that guide's `X-Cache-Status` check doesn't apply: MapProxy stores no tiles and the chart has no nginx, so TileserverGL renders every request (see [charts/rbt/README.md#known-limitations](../charts/rbt/README.md#known-limitations)).
 
 ```bash
 curl -fsS "https://$(oc get route rbt-epsg3857 -o jsonpath='{.spec.host}')/styles.json"
@@ -122,7 +133,7 @@ Expect a JSON array listing `RBT-TOPO`, `RBT-LIGHT`, `RBT-BROWN`, `RBT-GRAY`, `R
 | TileserverGL (EPSG:3857) | `tileservergl` | 8080 | Yes (`tileservers.epsg3857.route.enabled`) |
 | TileserverGL (EPSG:4087) | `tileservergl4087` | 8080 | No -- internal only; MapProxy's EPSG:4326 layers reproject from it in-cluster |
 
-Every Route uses `tls.termination: edge` with an HTTP-to-HTTPS redirect. MapProxy's Route also carries a `haproxy.router.openshift.io/timeout: 120s` annotation (default 30s is tight for a cold-cache tile render, since MapProxy renders synchronously on a miss).
+Every Route uses `tls.termination: edge` with an HTTP-to-HTTPS redirect. MapProxy's Route also carries a `haproxy.router.openshift.io/timeout: 120s` annotation (`mapproxy.route.timeout`): the default 30s is tight under load, since every request waits for TileserverGL to render it.
 
 ## Connecting GIS clients
 

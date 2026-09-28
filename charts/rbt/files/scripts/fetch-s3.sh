@@ -17,7 +17,8 @@
 # Required env vars: RBT_S3_URI, TERRAIN_S3_URI -- s3://bucket[/prefix] with
 # no filename (see charts/rbt/values.yaml's tileservers.<key>.s3.rbtUri/
 # terrainUri). FONTS_S3_URI / STYLES_S3_URI -- s3://bucket[/prefix] of the
-# fonts/ or styles/ tree (see s3.fontsUri/stylesUri). Any of these may be
+# fonts/ or styles/ tree (see s3.fontsUri/stylesUri). As in deploy.sh, the
+# s3:// is optional ("my-bucket/exports" works too). Any of these may be
 # left empty to skip that fetch (e.g. when persistence.existingClaim
 # points at a PVC someone else already populated). Optional: DATA_DIR
 # (default /data), FORCE_DOWNLOAD (default false), AWS_ENDPOINT_URL,
@@ -35,6 +36,11 @@ log()  { printf '\n==> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Adds the s3:// that deploy.sh also lets users leave off; blank stays blank.
+normalize_s3_uri() {
+  local value="${1%/}"
+  [[ -z "$value" || "$value" == s3://* ]] && echo "$value" || echo "s3://$value"
+}
 s3_bucket_name() { local uri="${1#s3://}"; echo "${uri%%/*}"; }
 s3_object_key()  { local uri="${1#s3://}"; case "$uri" in */*) echo "${uri#*/}" ;; *) echo "" ;; esac; }
 
@@ -57,15 +63,25 @@ remote_mtime_epoch() {
 # file alone afterwards (used for TERRAIN.mbtiles, which never changes).
 # FORCE_DOWNLOAD=true always re-downloads regardless of check_remote.
 fetch() {
-  local uri_prefix="$1" dest="$2" check_remote="$3" filename remote_uri need_download
+  local uri_prefix="$1" dest="$2" check_remote="$3" filename remote_uri need_download partial
 
   if [[ -z "$uri_prefix" ]]; then
     warn "No S3 URI configured for $dest; leaving whatever is already in the PVC (if anything) alone"
     return 0
   fi
 
+  # `aws s3 cp` downloads into "<dest>.<8 hex digits>" and renames it into
+  # place when done, so an init container killed mid-download (OOM,
+  # eviction, a deleted pod) leaves that partial copy on the PVC for good.
+  for partial in "$dest".*; do
+    if [[ -f "$partial" && "$partial" =~ \.[0-9a-fA-F]{8}$ ]]; then
+      warn "Removing $partial, left behind by an interrupted download"
+      rm -f -- "$partial"
+    fi
+  done
+
   filename="$(basename "$dest")"
-  remote_uri="${uri_prefix%/}/$filename"
+  remote_uri="$(normalize_s3_uri "$uri_prefix")/$filename"
   need_download=1
 
   if [[ "$FORCE_DOWNLOAD" == "true" ]]; then
@@ -108,6 +124,7 @@ fetch_tree() {
     warn "No S3 URI configured for $label; leaving whatever is already in $dest (if anything) alone"
     return 0
   fi
+  uri="$(normalize_s3_uri "$uri")"
 
   mkdir -p "$dest"
   if [[ "$FORCE_DOWNLOAD" == "true" ]]; then

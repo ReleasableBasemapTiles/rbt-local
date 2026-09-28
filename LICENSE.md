@@ -3,9 +3,9 @@ This document sets forth the licenses under which the design and code in this re
 
 # Design License 
 
-The visual design features of the Releasable Basemap Tiles (RBT) Styles (also known as the "look and feel" of the map) are licensed under the Creative Commons Attribution-ShareAlike 4.0 International license. To view a copy of the license, visit https://creativecommons.org/licenses/by-sa/4.0/. Attribution need not be provided on map images, but should be reasonably accessable from maps based on on these styles (for example, in a webpage linked from copyright notice on the map). Products or services using maps derived from this style's layers property or sprite icons need to visibly credit or reference 'ReleaseableBasemapTiles' with a link to https://github.com/ReleaseableBasemapTiles.
+The visual design features of the Releasable Basemap Tiles (RBT) Styles (also known as the "look and feel" of the map) are licensed under the Creative Commons Attribution-ShareAlike 4.0 International license. To view a copy of the license, visit https://creativecommons.org/licenses/by-sa/4.0/. Attribution need not be provided on map images, but should be reasonably accessible from maps based on these styles (for example, in a webpage linked from copyright notice on the map). Products or services using maps derived from this style's layers property or sprite icons need to visibly credit or reference 'ReleasableBasemapTiles' with a link to https://github.com/ReleasableBasemapTiles.
 
-Example Attribution: `<a href=\\\"https://github.com/ReleaseableBasemapTiles\\\" target=\\\"_blank\\\">&copy; ReleaseableBasemapTiles</a>`
+Example Attribution: `<a href="https://github.com/ReleasableBasemapTiles" target="_blank">&copy; ReleasableBasemapTiles</a>`
 
 
 # Fonts and sprites
@@ -18,7 +18,7 @@ The Releasable Basemap Tiles (RBT) use the following font families:
 
 - NGATopo True Type,  shall belong to the US Government and shall allow for unrestricted use by the National Geospatial-Intelligence Agency (NGA) https://www.nga.mil/ and its commercial, academic, other U.S. Government, and foreign government partners.
 
-All SVG and PNG icons also known as sprites in this repository used by the Releasable Basemap Tiles (RBT) Styles are licensed under the Creative Commons Attribution-ShareAlike 4.0 International license. To view a copy of the license, visit https://creativecommons.org/licenses/by-sa/4.0/. Attribution need not be provided on map images, but should be reasonably accessable from maps based on on these styles (for example, in a webpage linked from copyright notice on the map).
+All SVG and PNG icons also known as sprites in this repository used by the Releasable Basemap Tiles (RBT) Styles are licensed under the Creative Commons Attribution-ShareAlike 4.0 International license. To view a copy of the license, visit https://creativecommons.org/licenses/by-sa/4.0/. Attribution need not be provided on map images, but should be reasonably accessible from maps based on these styles (for example, in a webpage linked from copyright notice on the map).
 
 
 # Data

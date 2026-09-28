@@ -1,16 +1,27 @@
 # Releasable Basemap Tiles (RBT)
 
-RBT (Releasable Basemap Tiles) is a web application that provides map tiles for military and coalition partners. Think of it like Google Maps, but designed for military use with maps that can be safely shared internationally -- vector tiles instead of the older raster formats (like CADRG), for smaller files, sharper rendering at any zoom, and easier coalition sharing. See [Architecture](docs/architecture.md) for the full explanation, the technical design, and a diagram. Release history is in [CHANGELOG.md](CHANGELOG.md); commit and pull-request titles follow [CONTRIBUTING.md](CONTRIBUTING.md).
+RBT (Releasable Basemap Tiles) is a web application that provides map tiles for military and coalition partners. Think of it like Google Maps, but designed for military use with maps that can be safely shared internationally -- vector tiles instead of the older raster formats (like CADRG), for smaller files, sharper rendering at any zoom, and easier coalition sharing. See [Architecture](docs/architecture.md) for the full explanation, the technical design, and diagrams. Release history is in [CHANGELOG.md](CHANGELOG.md); commit and pull-request titles follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
-This guide walks through deploying RBT with **Docker Compose** on a single host (a workstation, VM, or on-premises server) running **macOS**, **Windows 11**, or **Linux**. Don't worry if you're new to any of these tools -- each command below is meant to be copied and pasted, one at a time.
+This guide walks through deploying RBT with **Docker Compose** on a single host (a workstation, VM, or on-premises server) running **macOS**, **Windows 11**, or **Linux**. Don't worry if you're new to any of these tools -- each command below is meant to be copied and pasted, one at a time, and the [Glossary](#glossary-of-terms) at the end explains the terms this guide uses.
+
+## Choose Your Path
+
+| You want to... | Do this | Guide |
+| --- | --- | --- |
+| Run RBT on one machine, the quick way | Get [S3 credentials](#get-s3-credentials), then run `./deploy.sh` (macOS/Linux) or `.\deploy.ps1` (Windows) | [Quickstart](#quickstart) |
+| Run each setup step yourself | Follow the manual guide for your OS | [macOS](docs/install-macos.md), [Linux](docs/install-linux.md), [Windows 11](docs/install-windows.md) |
+| Put an AWS ALB or CloudFront in front, instead of the local nginx | Add `--no-nginx` (or `-NoNginx`) | [Deploying Without nginx](docs/advanced-deployment.md) |
+| Get sharper EPSG:4326 maps | Add `--4087` (or `-Use4087`) | [The EPSG:4087 Deployment](docs/deployment-4087.md) |
+| Run on Kubernetes or OpenShift | Install the Helm chart in [`charts/rbt`](charts/rbt) | [Deploying to OpenShift](docs/deployment-openshift.md) |
+| Check a running deployment, or connect QGIS/ArcGIS | Start from the [endpoints](#endpoints) below | [Verifying](docs/verify.md), [GIS clients](docs/gis-clients.md) |
 
 ## Requirements
 
 - macOS, Windows 11 (natively, or via WSL2), or Linux
-- Both container images this stack uses (`maptiler/tileserver-gl` and `ghcr.io/mapproxy/mapproxy/mapproxy`) publish `linux/amd64` and `linux/arm64` builds, so this runs on Intel/AMD and Arm64 hosts alike (including Apple Silicon)
+- An Intel/AMD or Arm64 machine (including Apple Silicon): the `maptiler/tileserver-gl` and `nginx` images publish `linux/amd64` and `linux/arm64` builds, and Docker builds the MapProxy image on your machine from [`Dockerfile.mapproxy`](Dockerfile.mapproxy)
 - Internet connection, for downloading components and the MBTiles data
 - Minimum 16GB of RAM and 8 cores CPU recommended
-- Disk space: enough for the two MBTiles files described below, **plus** headroom for the MapProxy tile cache it builds over time. Ask the RBT team for current file sizes when you receive your S3 credentials -- the datasets are updated periodically, so we don't pin numbers here that would go stale
+- Disk space: enough for the two MBTiles files described below (four with the EPSG:4087 deployment), **plus** up to 10 GB for nginx's tile cache and room for the MapProxy image. Ask the RBT team for current file sizes when you receive your S3 credentials -- the datasets are updated periodically, so we don't pin numbers here that would go stale
 
 ## Get S3 Credentials
 
@@ -26,16 +37,27 @@ Before starting, you need special access to download the map data:
 
 You'll use these credentials to download two files -- `RBT.mbtiles` and `TERRAIN.mbtiles` -- which `tileserver/config/config.json` references by these exact names. The Quickstart below downloads both automatically once your credentials and bucket paths are in place.
 
+### Downloading the map data by hand
+
+The deploy scripts download the data for you. If you're following one of the manual install guides instead, copy both files into `tileserver/data/3857/`, from the `rbt-local` directory, using the bucket paths the RBT team gave you (`aws s3 ls s3://<bucket-path>/ --profile rbt` lists what's there):
+
+```bash
+aws s3 cp s3://<rbt-bucket-path>/RBT.mbtiles tileserver/data/3857/ --profile rbt
+aws s3 cp s3://<terrain-bucket-path>/TERRAIN.mbtiles tileserver/data/3857/ --profile rbt
+```
+
+The [EPSG:4087 deployment](docs/deployment-4087.md) also needs its own `RBT.mbtiles` and `TERRAIN.mbtiles` in `tileserver/data/4087/`. TileserverGL reads MBTiles only at startup, so after replacing them on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` on that deployment): it restarts TileserverGL and empties nginx's tile cache.
+
 ## Quickstart
 
 1. **Install Git** if you don't already have it (most Macs and Linux systems do; on Windows 11 try `winget install Git.Git`, or see the per-OS guide below), then clone this repository and open a terminal inside it:
 
    ```bash
-   git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git
+   git clone https://github.com/ReleasableBasemapTiles/rbt-local.git
    cd rbt-local
    ```
 
-2. **Copy `.env.example` to `.env`**, and fill in `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` with the bucket paths the RBT team gave you alongside your credentials.
+2. **Copy `.env.example` to `.env`**, fill in `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` with the bucket paths the RBT team gave you alongside your credentials, and uncomment `AWS_PROFILE=rbt` so the download uses the profile you configured above.
 
 3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data, and starts RBT -- no other manual steps required.
 
@@ -51,17 +73,23 @@ You'll use these credentials to download two files -- `RBT.mbtiles` and `TERRAIN
    .\deploy.ps1
    ```
 
-Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--no-nginx`/`-NoNginx` to skip the local reverse proxy (see [Advanced: Deploying Without nginx](docs/advanced-deployment.md)), or `--4087`/`-Use4087` to deploy a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output (see [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md)).
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, or the deployment options below.
 
 Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
 ## Deployment Options
 
-This repository's three Compose files combine into four Docker Compose deployments, plus a fifth, Helm-based option for Kubernetes/OpenShift. All five publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326 -- so what differs is whether a local nginx fronts the services, and which projection the EPSG:4326 tiles are reprojected from. The diagrams below show default ports; every port is configurable in `.env` (see [.env.example](.env.example)). Options 3 and 4 name `docker-compose.4087.yaml` with an explicit `-f` instead of relying on the auto-discovered `docker-compose.yaml`, so `docker compose ps`/`logs`/`down` need those same `-f` flags -- `./deploy.sh`'s and `.\deploy.ps1`'s closing hints print the exact command for whichever stack you just deployed.
+This repository's three Compose files combine into four deployments on a single Docker host, and a Helm chart covers Kubernetes/OpenShift. All five publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326. What differs is whether a local nginx fronts (and caches) the services, and which projection the EPSG:4326 layers are reprojected from:
 
-### 1. Default: nginx in front of both services
+| Deployment | Deploy it with | Compose files | nginx and its tile cache | EPSG:4326 reprojected from |
+| --- | --- | --- | --- | --- |
+| 1. Default | `./deploy.sh`, `.\deploy.ps1`, or `docker compose up -d` | `docker-compose.yaml` + `docker-compose.override.yaml` | Yes | EPSG:3857 |
+| 2. [Without nginx](docs/advanced-deployment.md) (AWS ALB / CloudFront) | `--no-nginx` / `-NoNginx` | `docker-compose.yaml` | No | EPSG:3857 |
+| 3. [EPSG:4087](docs/deployment-4087.md) dual-TileserverGL | `--4087` / `-Use4087` | `docker-compose.yaml` + `docker-compose.4087.yaml` + `docker-compose.override.yaml` | Yes | EPSG:4087 |
+| 4. EPSG:4087 without nginx | `--4087 --no-nginx` / `-Use4087 -NoNginx` | `docker-compose.yaml` + `docker-compose.4087.yaml` | No | EPSG:4087 |
+| 5. [Kubernetes/OpenShift](docs/deployment-openshift.md) | `helm install` with [`charts/rbt`](charts/rbt) | -- | No | EPSG:4087 (or EPSG:3857, with one TileserverGL) |
 
-`docker compose up -d`, `./deploy.sh`, and `.\deploy.ps1` all deploy this stack. Compose merges `docker-compose.yaml` with `docker-compose.override.yaml`, which adds the local nginx reverse proxy and response cache, so everything is reachable through a single port. MapProxy and TileserverGL still publish their own ports too, which is what the [Direct Access](docs/gis-clients.md#3-direct-access-optional) section of the GIS clients guide uses.
+The default deployment looks like this -- [Architecture](docs/architecture.md#deployment-variants) has a diagram of each:
 
 ```mermaid
 flowchart LR
@@ -69,113 +97,39 @@ flowchart LR
 
   subgraph stack["docker-compose.yaml + docker-compose.override.yaml"]
     nginx["nginx<br/>port 8082"]
-    mapproxy["mapproxy<br/>port 8081<br/>caches EPSG:3857<br/>reprojects 3395 and 4326 from it"]
+    tilecache[("nginx/cache<br/>tile cache")]
+    mapproxy["mapproxy<br/>port 8081<br/>EPSG:3857, plus 3395 and<br/>4326 reprojected from it"]
     tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
-    tilecache[("mapproxy/data<br/>tile cache")]
     mbtiles[("tileserver/data/3857")]
   end
 
   client -->|"port 8082"| nginx
+  nginx --- tilecache
   nginx -->|"/mapproxy/* and /"| mapproxy
   nginx -->|"/tileservergl/*"| tileservergl
-  mapproxy -->|"renders uncached tiles"| tileservergl
-  mapproxy --- tilecache
+  mapproxy -->|"EPSG:3857 tiles"| tileservergl
   tileservergl --- mbtiles
 ```
 
-### 2. Default without nginx (AWS ALB / CloudFront)
+Every port is configurable in `.env` (see [.env.example](.env.example)). Deployments 2 to 4 name their Compose files with `-f`, so pass the same `-f` flags to later `docker compose` commands (a plain `docker compose up -d` switches back to deployment 1), or set `COMPOSE_FILE` in `.env` (see [.env.example](.env.example)). `./deploy.sh` and `.\deploy.ps1` finish by printing the exact commands for the stack they deployed.
 
-`./deploy.sh --no-nginx`, `.\deploy.ps1 -NoNginx`, or `docker compose -f docker-compose.yaml up -d` names the base file explicitly, which opts out of the automatic override merge, so nginx never starts. MapProxy and TileserverGL each serve their native paths -- no `/mapproxy` or `/tileservergl` prefix -- on their own published port, ready to be used as ALB target groups or CloudFront origins. See [Advanced: Deploying Without nginx](docs/advanced-deployment.md).
+## Endpoints
 
-```mermaid
-flowchart LR
-  client(["Browser / GIS client"])
-  edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
+With the default ports, on the machine running RBT (from another machine, use its hostname instead of `localhost`):
 
-  subgraph stack["docker-compose.yaml only"]
-    mapproxy["mapproxy<br/>port 8081<br/>caches EPSG:3857<br/>reprojects 3395 and 4326 from it"]
-    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
-    tilecache[("mapproxy/data<br/>tile cache")]
-    mbtiles[("tileserver/data/3857")]
-  end
+| What | Through nginx (deployments 1 and 3) | Direct (every Compose deployment) |
+| --- | --- | --- |
+| Health check | `http://localhost:8082/healthz` (answers `ok`) | -- |
+| MapProxy WMTS | `http://localhost:8082/mapproxy/wmts/1.0.0/WMTSCapabilities.xml` | `http://localhost:8081/wmts/1.0.0/WMTSCapabilities.xml` |
+| MapProxy WMS | `http://localhost:8082/mapproxy/wms` | `http://localhost:8081/wms` |
+| TileserverGL style previews | `http://localhost:8082/tileservergl/` | `http://localhost:8080/` |
+| EPSG:4087 TileserverGL (deployments 3 and 4) | `http://localhost:8082/tileservergl4087/` | `http://localhost:8083/` |
 
-  client --> edge
-  edge -->|"/wms*, /wmts/*, /service*, /demo/*"| mapproxy
-  edge -->|"/styles/*, /data/*, /styles.json, /"| tileservergl
-  mapproxy -->|"renders uncached tiles"| tileservergl
-  mapproxy --- tilecache
-  tileservergl --- mbtiles
-```
-
-### 3. EPSG:4087 dual-TileserverGL with nginx
-
-`./deploy.sh --4087` or `.\deploy.ps1 -Use4087` deploys `docker-compose.4087.yaml` in place of `docker-compose.yaml`, adding a second TileserverGL container that serves EPSG:4087 MBTiles from `tileserver/data/4087`, with nginx fronting all of it exactly like option 1. MapProxy runs `mapproxy.4087.yaml`, which builds its EPSG:4326 caches from that container instead of from EPSG:3857 -- a pure unit-scale conversion rather than a resample away from Web Mercator's distortion, so EPSG:4326 output stays sharp away from the equator. The EPSG:3857 and EPSG:3395 layers still come from the original container, and the published layer list is unchanged. See [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md).
-
-```mermaid
-flowchart LR
-  client(["Browser / GIS client"])
-
-  subgraph stack["docker-compose.4087.yaml + docker-compose.override.yaml"]
-    nginx["nginx<br/>port 8082"]
-    mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
-    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
-    tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]
-    tilecache[("mapproxy/data<br/>tile cache")]
-    mbtiles3857[("tileserver/data/3857")]
-    mbtiles4087[("tileserver/data/4087")]
-    shared[("tileserver/fonts<br/>tileserver/styles<br/>tileserver/config")]
-  end
-
-  client -->|"port 8082"| nginx
-  nginx -->|"/mapproxy/* and /"| mapproxy
-  nginx -->|"/tileservergl/*"| tileservergl
-  mapproxy -->|"EPSG:3857 layers"| tileservergl
-  mapproxy -->|"EPSG:4326 layers"| tileservergl4087
-  mapproxy --- tilecache
-  tileservergl --- mbtiles3857
-  tileservergl4087 --- mbtiles4087
-  tileservergl --- shared
-  tileservergl4087 --- shared
-```
-
-### 4. EPSG:4087 dual-TileserverGL without nginx
-
-`./deploy.sh --4087 --no-nginx`, `.\deploy.ps1 -Use4087 -NoNginx`, or `docker compose -f docker-compose.4087.yaml up -d` combines options 2 and 3: the same EPSG:4087-backed EPSG:4326 reprojection as option 3, but with nginx skipped like option 2. All three containers publish their own port directly -- MapProxy (`MAPPROXY_PORT`, default `8081`), the EPSG:3857 TileserverGL (`TILESERVER_PORT`, default `8080`), and the EPSG:4087 TileserverGL (`TILESERVER_4087_PORT`, default `8083`) -- ready to sit behind an ALB/CloudFront the same way option 2 does. See [Advanced: Deploying Without nginx](docs/advanced-deployment.md#combining-with-the-epsg4087-deployment).
-
-```mermaid
-flowchart LR
-  client(["Browser / GIS client"])
-  edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
-
-  subgraph stack["docker-compose.4087.yaml only"]
-    mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
-    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
-    tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]
-    tilecache[("mapproxy/data<br/>tile cache")]
-    mbtiles3857[("tileserver/data/3857")]
-    mbtiles4087[("tileserver/data/4087")]
-    shared[("tileserver/fonts<br/>tileserver/styles<br/>tileserver/config")]
-  end
-
-  client --> edge
-  edge -->|"/wms*, /wmts/*, /service*, /demo/*"| mapproxy
-  edge -->|"/styles/*, /data/*, /styles.json, /"| tileservergl
-  mapproxy -->|"EPSG:3857 layers"| tileservergl
-  mapproxy -->|"EPSG:4326 layers"| tileservergl4087
-  mapproxy --- tilecache
-  tileservergl --- mbtiles3857
-  tileservergl4087 --- mbtiles4087
-  tileservergl --- shared
-  tileservergl4087 --- shared
-```
-
-### 5. OpenShift/Kubernetes via Helm
-
-The four deployments above all run on a single Docker host via Compose. [`charts/rbt`](charts/rbt) is a Helm chart that deploys the same containers as option 4 (EPSG:4087 dual-TileserverGL, no nginx) to a Kubernetes/OpenShift cluster instead, with `RBT.mbtiles`/`TERRAIN.mbtiles` and `tileserver/fonts`/`tileserver/styles` downloaded from S3 into PVCs rather than bind-mounted. See [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md).
+Only requests through nginx are cached (see [Tile caching](docs/architecture.md#tile-caching)). [Connecting GIS Clients](docs/gis-clients.md) lists every MapProxy layer and the rest of TileserverGL's endpoints.
 
 ## Verifying It's Working
 
-See [Verifying Your Installation](docs/verify.md) for a full checklist. The short version:
+See [Verifying Your Installation](docs/verify.md) for a full checklist, including the differences for each deployment. The short version, for the default deployment:
 
 ```bash
 docker compose ps               # all three services should be "running"/"healthy"
@@ -191,6 +145,8 @@ docker compose down --remove-orphans   # stop
 docker compose up -d                   # start again
 ```
 
+For deployments 2 to 4, add the same `-f` flags you deployed with (see [Deployment Options](#deployment-options)).
+
 ## Connecting GIS Clients
 
 RBT works with QGIS, ArcGIS Pro, and other WMS/WMTS-capable GIS software. See [Connecting GIS Clients to RBT](docs/gis-clients.md) for connection URLs and step-by-step walkthroughs with screenshots.
@@ -201,19 +157,28 @@ Something not working? See [Troubleshooting](docs/troubleshooting.md) for common
 
 ## Further Reading
 
-- [Architecture](docs/architecture.md) -- what RBT is, why it uses vector tiles, and the technical design
+- [Architecture](docs/architecture.md) -- what RBT is, why it uses vector tiles, the technical design, a diagram of each deployment, and how tile caching works
 - [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), [Installing on Windows 11](docs/install-windows.md) -- manual, step-by-step setup per OS
 - [Verifying Your Installation](docs/verify.md)
 - [Connecting GIS Clients to RBT](docs/gis-clients.md)
 - [Advanced: Deploying Without nginx](docs/advanced-deployment.md) -- for AWS ALB/CloudFront deployments
 - [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md) -- a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output
-- [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md) -- the same stack as option 4 above, deployed to Kubernetes/OpenShift with `charts/rbt` instead of Compose
+- [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md) -- the same stack as deployment 4 above, deployed to Kubernetes/OpenShift with `charts/rbt` instead of Compose
 - [Troubleshooting](docs/troubleshooting.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md) -- commit conventions and the checks CI runs on every pull request
 
 ## Glossary of Terms
 
 - **CLI**: Command Line Interface - typing commands instead of clicking buttons
-- **Docker**: Software that packages applications in containers
 - **Container**: A packaged application with all its dependencies
+- **Docker**: Software that packages applications in containers
+- **Docker Compose**: The tool that starts this stack's containers together, from the `docker-compose*.yaml` files
+- **EPSG code**: The ID of a map projection (coordinate reference system). RBT serves **EPSG:3857** (Web Mercator, what most web maps use), **EPSG:3395** (World Mercator), and **EPSG:4326** (WGS 84 latitude/longitude); the EPSG:4087 deployment also uses **EPSG:4087** (World Equidistant Cylindrical) internally, for sharper EPSG:4326 output
+- **MapProxy**: The service that republishes TileserverGL's maps as WMS and WMTS, in several projections
+- **MBTiles**: A single file holding a whole tile set. RBT's map data is two of them: `RBT.mbtiles` (the vector map) and `TERRAIN.mbtiles` (elevation data, for hillshading)
+- **nginx**: The web server in front of the stack by default: one port for everything, plus a cache of the map images it has served
 - **Repository/Repo**: A project's code and files stored online
+- **Style**: The rules (colors, fonts, which features to draw at which zoom) that turn vector data into a map. RBT ships six, such as `RBT-TOPO` and `RBT-DARK`
 - **Terminal**: The application where you type commands
+- **TileserverGL**: The service that reads the MBTiles and draws map images from them in each style
+- **WMS / WMTS**: Standards GIS software uses to request maps. WMS asks for one image of any area and size; WMTS asks for pre-cut tiles on a fixed grid, which cache better

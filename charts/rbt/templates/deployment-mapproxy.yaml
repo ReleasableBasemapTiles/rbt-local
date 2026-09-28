@@ -16,6 +16,11 @@ spec:
       labels:
         {{- include "rbt.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: mapproxy
+      annotations:
+        # Rolls the pod whenever the ConfigMap changes: MapProxy reloads an
+        # edited mapproxy.yaml by itself, but uwsgi.ini and logging.ini are
+        # only read at startup.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-mapproxy.yaml") . | sha256sum }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -27,11 +32,11 @@ spec:
         - name: mapproxy
           image: "{{ .Values.mapproxy.image.repository }}:{{ .Values.mapproxy.image.tag }}"
           imagePullPolicy: {{ .Values.mapproxy.image.pullPolicy }}
-          # The mapproxy image's Dockerfile sets no ENTRYPOINT, only a CMD
-          # (the "-nginx" tag's is `["./run-nginx.sh"]`) -- so, unlike the
-          # TileserverGL containers below, Compose's `command:` here
-          # overrides that empty-ENTRYPOINT+CMD pair directly, and maps
-          # 1:1 onto Kubernetes' "command" field rather than "args".
+          # Kubernetes' "command" replaces the image's ENTRYPOINT (the
+          # micromamba base image's env-activation script), whereas Compose's
+          # `command:` only replaces CMD. Dockerfile.mapproxy sets PATH,
+          # PROJ_DATA and GDAL_DATA so uwsgi runs the same without that
+          # activation.
           command: ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]
           env:
             - name: HOME
@@ -40,6 +45,8 @@ spec:
               value: {{ .Values.mapproxy.uwsgi.processes | quote }}
             - name: UWSGI_THREADS
               value: {{ .Values.mapproxy.uwsgi.threads | quote }}
+            - name: UWSGI_CHEAPER
+              value: {{ .Values.mapproxy.uwsgi.cheaper | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.mapproxy.containerPort }}
@@ -61,21 +68,27 @@ spec:
               subPath: tile_locks
             - name: dshm
               mountPath: /dev/shm
-          # Matches docker-compose.4087.yaml's healthcheck, which opens a
-          # raw TCP connection to uwsgi's http-socket rather than issuing
-          # an HTTP request.
+          # MapProxy's start page only answers 200 once a uWSGI worker has
+          # loaded the config (the Compose healthcheck requests the same
+          # page); a TCP connect would pass as soon as the master listens.
           startupProbe:
-            tcpSocket:
+            httpGet:
+              path: /
               port: http
             periodSeconds: 5
             failureThreshold: 12
             timeoutSeconds: 5
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /
               port: http
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 5
+          # Liveness stays a TCP check: it only needs to catch a dead master
+          # (uWSGI already restarts stuck workers via harakiri), and an HTTP
+          # check could time out while every worker is busy under load and
+          # restart a healthy pod.
           livenessProbe:
             tcpSocket:
               port: http
@@ -88,13 +101,11 @@ spec:
         - name: mapproxy-config
           configMap:
             name: {{ include "rbt.fullname" . }}-mapproxy-config
-        # Ephemeral tile cache -- rebuilds from the TileserverGL sources on
-        # every pod restart. Swap for a PVC (with `strategy: RollingUpdate`
-        # changed to `Recreate` if it's ReadWriteOnce) if you'd rather the
-        # cache survive restarts; see charts/rbt/README.md.
+        # MapProxy's cache directories. Every cache sets disable_storage, so
+        # only lock files are written here -- no tiles.
         - name: cache
           emptyDir: {}
-        # docker-compose.4087.yaml's `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
+        # docker-compose.yaml's `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
         - name: dshm
           emptyDir:
             medium: Memory

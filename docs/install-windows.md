@@ -21,9 +21,8 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
 iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
-# Install AWS CLI v2, and Git + Git LFS (NoAutoCrlf keeps checkouts
-# respecting this repo's .gitattributes -- see "A note on Git line
-# endings" below)
+# Install AWS CLI v2 and Git (NoAutoCrlf keeps checkouts respecting this
+# repo's .gitattributes -- see "A note on Git line endings" below)
 choco install awscli -y
 choco install git -y --params "'/NoAutoCrlf'"
 
@@ -51,20 +50,19 @@ Docker Desktop's installer adds you to the local `docker-users` group automatica
 ### Step 3: Clone the repository
 
 ```powershell
-git lfs install
-git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git
+git clone https://github.com/ReleasableBasemapTiles/rbt-local.git
 cd rbt-local
 ```
 
 Clone to a path on your `C:` drive (e.g. `C:\Users\<you>\rbt-local`) rather than a network share or removable drive -- Docker Desktop's file sharing performs best on a local NTFS volume.
 
-### Step 4: Prepare runtime directories and start RBT
+### Step 4: Download the map data and start RBT
 
-Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs. You do still need the runtime directories to exist, and this repo's config files need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
+Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first, as described in [Downloading the map data by hand](../README.md#downloading-the-map-data-by-hand) in the main README. This repo's config files do need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
 
 ```powershell
-# Download the map data (see "Get S3 Credentials" in the main README) before
-# continuing, then start the RBT stack from the rbt-local directory
+# Download the map data (see "Downloading the map data by hand" in the main
+# README), then start the RBT stack from the rbt-local directory
 docker compose up -d
 
 # Check logs
@@ -89,7 +87,7 @@ If `wsl --install` isn't available on your system, follow Microsoft's [manual in
 
 ### Step 2: Give WSL2 enough memory
 
-WSL2 defaults to using **half of your host's RAM** (and 25% of its swap), shared across every distro you run. This stack alone recommends 16GB, so that default is too small on most laptops. Create (or edit) `%UserProfile%\.wslconfig` **in Windows** (i.e. `C:\Users\<you>\.wslconfig` -- not a path inside WSL) with at least:
+WSL2 defaults to using **half of your host's RAM**, plus a swap file a quarter the size of your RAM, shared across every distro you run. This stack alone recommends 16GB, so that default is too small on most laptops. Create (or edit) `%UserProfile%\.wslconfig` **in Windows** (i.e. `C:\Users\<you>\.wslconfig` -- not a path inside WSL) with at least:
 
 ```ini
 [wsl2]
@@ -107,9 +105,8 @@ The new limits take effect the next time you open a WSL2 terminal. See Microsoft
 
 ### Step 3: Choose Your Docker Setup
 
-**Option A: Docker Engine inside WSL2 (Recommended)** - lighter weight, no separate GUI application. See [Docker Engine in WSL2](#docker-engine-in-wsl2) below.
-
-**Option B: Docker Desktop with WSL2 backend** - adds a GUI and system tray app on top of the same WSL2 engine. See [Docker Desktop with WSL2](#docker-desktop-with-wsl2) below.
+- **Docker Engine inside WSL2 (recommended)** -- lighter weight, no separate GUI application. See [Docker Engine in WSL2](#docker-engine-in-wsl2) below.
+- **Docker Desktop with the WSL2 backend** -- adds a GUI and system tray app on top of the same WSL2 engine. See [Docker Desktop with WSL2](#docker-desktop-with-wsl2) below.
 
 Both run the same Linux containers the same way; pick based on whether you want the GUI.
 
@@ -118,11 +115,12 @@ Both run the same Linux containers the same way; pick based on whether you want 
 Open your WSL2 distribution (search "Ubuntu" in the Start menu) and run:
 
 ```bash
-# Download and install AWS CLI
+# Download and install AWS CLI v2 for this machine's architecture
+# (x86_64 or aarch64)
 sudo apt-get update;
 sudo apt-get install -y unzip ca-certificates curl gnupg lsb-release;
 sudo update-ca-certificates;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     sudo ./aws/install;
 
@@ -137,39 +135,42 @@ echo \
   | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null;
 sudo chmod a+r /etc/apt/keyrings/docker.gpg;
 
-# Install Docker, Git, and Git LFS
+# Install Docker and Git
 sudo apt-get update;
 sudo apt-get install -y \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin \
-    git-all git-lfs;
+    git;
 
 # Start the Docker service
 sudo service docker start
 ```
 
-WSL2 doesn't run background services automatically on every launch by default, so you may need to run `sudo service docker start` each time you open a new WSL2 session -- or enable [systemd support](https://learn.microsoft.com/en-us/windows/wsl/systemd) in `/etc/wsl.conf` to avoid that.
+Distributions that run systemd start Docker on every launch. Ubuntu installed with `wsl --install` does by default, and `ps -p 1 -o comm=` prints `systemd` if yours does. Without systemd, run `sudo service docker start` each time you open a new WSL2 session, or enable [systemd support](https://learn.microsoft.com/en-us/windows/wsl/systemd) in `/etc/wsl.conf` to avoid that.
 
 #### Docker Desktop with WSL2
 
-1. Follow Docker's [Windows install instructions](https://docs.docker.com/desktop/install/windows-install/) and download the [installer](https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe).
+1. Follow Docker's [Windows install instructions](https://docs.docker.com/desktop/install/windows-install/), which link the installer for your machine (x86_64 or Arm64).
 2. Start Docker Desktop, open **Settings -> General**, and confirm **Use the WSL 2 based engine** is checked.
 
-![settings general](../images/settings_general.png)
+   ![settings general](../images/settings_general.png)
 
-Do **not** enable "Expose daemon on tcp://localhost:2375" -- that opens the Docker Engine API on your machine with no authentication. WSL integration (next step) already gives your Linux distro access to Docker without it.
+   Do **not** enable "Expose daemon on tcp://localhost:2375" -- that opens the Docker Engine API on your machine with no authentication. WSL integration (next step) already gives your Linux distro access to Docker without it.
 
-1. Open **Settings -> Resources -> WSL Integration**, enable **Enable integration with my default WSL distro**, and turn on any additional distros you use.
+3. Open **Settings -> Resources -> WSL Integration**, enable **Enable integration with my default WSL distro**, and turn on any additional distros you use.
 
-![wsl integration](../images/wsl_integration.png)
+   ![wsl integration](../images/wsl_integration.png)
 
-1. From your WSL2 distribution, confirm Docker is reachable: `docker --version`
-2. Install Git and Git LFS if you haven't already:
+4. From your WSL2 distribution, confirm Docker is reachable: `docker --version`
+5. Install the AWS CLI and Git inside your WSL2 distribution, if you haven't already:
 
-```bash
-sudo apt-get install -y git-all git-lfs
-git lfs install
-```
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y unzip git
+   curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
+       unzip awscliv2.zip && \
+       sudo ./aws/install
+   ```
 
 ### Step 4: Clone into the WSL2 filesystem (not `/mnt/c/...`)
 
@@ -177,20 +178,26 @@ Clone this repository into your **WSL2 Linux filesystem** -- your home directory
 
 ```bash
 cd ~
-git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git
+git clone https://github.com/ReleasableBasemapTiles/rbt-local.git
 cd rbt-local
 ```
 
 ### Step 5: Set permissions and start RBT
 
 ```bash
-# The mapproxy container writes to these directories as uid/gid 1000,
-# which is also the default uid/gid of the first user WSL creates for you.
+# The mapproxy container runs as uid/gid 1000 (Dockerfile.mapproxy) and
+# writes to these directories -- also the uid/gid of the first user WSL
+# creates for you. mapproxy/data isn't in the repo, so create it first.
+mkdir -p mapproxy/data
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
+sudo chmod 775 nginx/cache
 
-# Download the map data (see "Get S3 Credentials" in the main README) before
-# continuing, then start the RBT stack from the rbt-local directory
+# Download the map data (see "Downloading the map data by hand" in the main
+# README), then start the RBT stack from the rbt-local directory. With Docker
+# Engine, docker needs root: prefix its commands with sudo, or add yourself to
+# the docker group (root-equivalent access) with `sudo usermod -aG docker $USER`
+# and open a new WSL2 terminal. Docker Desktop's WSL integration needs neither.
 docker compose up -d
 
 # Check logs
@@ -202,7 +209,7 @@ docker compose down --remove-orphans
 
 ## A note on disk space
 
-Everything in your WSL2 distribution -- including this repository and every MBTiles/GeoPackage file the stack downloads or creates -- lives inside a single virtual disk file (`ext4.vhdx`) that grows as needed but **does not shrink automatically** when you delete files. Make sure the Windows drive hosting your WSL2 distro has enough free space up front (this applies to Option B only; Option A's native Windows install uses your regular NTFS volume directly).
+Everything in your WSL2 distribution -- including this repository, the MBTiles files the stack downloads, and nginx's tile cache -- lives inside a single virtual disk file (`ext4.vhdx`) that grows as needed but **does not shrink automatically** when you delete files. Make sure the Windows drive hosting your WSL2 distro has enough free space up front (this applies to Option B only; Option A's native Windows install uses your regular NTFS volume directly).
 
 If you need to reclaim space later, see Microsoft's [WSL disk space guide](https://learn.microsoft.com/en-us/windows/wsl/disk-space), which covers compacting the `.vhdx` file, `wsl --manage <distro> --resize`, and moving a distro to a different drive.
 

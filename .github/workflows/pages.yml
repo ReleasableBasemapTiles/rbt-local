@@ -12,12 +12,12 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# Per ref: in one group, a queued pull request build would cancel a queued
+# deploy from main. Deploys queue; a pull request only needs its latest run.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -50,6 +50,9 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

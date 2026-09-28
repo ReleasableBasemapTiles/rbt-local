@@ -36,6 +36,10 @@ spec:
       labels:
         {{- include "rbt.selectorLabels" $root | nindent 8 }}
         app.kubernetes.io/component: {{ $key }}
+      annotations:
+        # Rolls the pod whenever config.json or fetch-s3.sh changes --
+        # TileserverGL only reads its config at startup.
+        checksum/config: {{ include (print $root.Template.BasePath "/configmap-tileserver.yaml") $root | sha256sum }}
     spec:
       {{- with $root.Values.imagePullSecrets }}
       imagePullSecrets:
@@ -46,7 +50,7 @@ spec:
       initContainers:
         # Populates the PVC from S3 -- MBTiles plus the shared fonts/ and
         # styles/ trees (see ../files/scripts/fetch-s3.sh). Fonts/styles
-        # are the OpenShift equivalent of docker-compose.4087.yaml's bind
+        # are the OpenShift equivalent of the Compose services' bind
         # mounts, without a second image. The fetch helpers no-op when
         # their URI is blank, which is expected when
         # persistence.existingClaim points at a PVC populated out-of-band.
@@ -97,7 +101,7 @@ spec:
         - name: tileserver
           image: "{{ $root.Values.tileserverImage.repository }}:{{ $root.Values.tileserverImage.tag }}"
           imagePullPolicy: {{ $root.Values.tileserverImage.pullPolicy }}
-          # Equivalent to docker-compose.4087.yaml's `command: ["-c",
+          # Equivalent to the Compose services' `command: ["-c",
           # "/config/config.json"]` -- Compose's "command" overrides the
           # image's CMD, not its ENTRYPOINT (docker-entrypoint.sh), so the
           # Kubernetes analog is "args", leaving "command" (ENTRYPOINT)
@@ -132,7 +136,7 @@ spec:
               mountPath: /data
             - name: dshm
               mountPath: /dev/shm
-          # Matches docker-compose.4087.yaml's healthcheck (same command,
+          # Matches the Compose services' healthcheck (same command,
           # same 180s start_period) -- startupProbe covers the initial
           # MBTiles/style load so the readiness/liveness probes below can
           # use tighter thresholds once the container is actually up.
@@ -170,7 +174,7 @@ spec:
             items:
               - key: fetch-s3.sh
                 path: fetch-s3.sh
-        # docker-compose.4087.yaml's `shm_size: ${TILESERVER_SHM_SIZE:-2gb}`.
+        # The Compose services' `shm_size: ${TILESERVER_SHM_SIZE:-2gb}`.
         - name: dshm
           emptyDir:
             medium: Memory

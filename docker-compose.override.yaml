@@ -10,22 +10,34 @@
 #   docker compose -f docker-compose.yaml up -d
 #
 # See README.md for the ALB/CloudFront routing this replaces.
+
+# Log rotation, as in docker-compose.yaml (YAML anchors don't cross files).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   nginx:
-    image: nginx:alpine
+    # Pinned to the stable branch; plain "alpine" tracks nginx mainline.
+    image: nginx:1.30-alpine
     container_name: nginx
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${NGINX_PORT:-8082}:8082"
     volumes:
       - ./nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro
+      # The tile cache (see nginx.conf) -- kept on the host so it survives
+      # container restarts; deploy.sh --refresh / deploy.ps1 -Refresh empty it.
       - ./nginx/cache:/var/cache/nginx
-      - ./nginx/logs:/var/log/nginx
-      - ./nginx/run:/var/run/nginx
+    # Logs aren't mounted: the image sends them to stdout/stderr, so read
+    # them with `docker compose logs nginx`.
     depends_on:
       mapproxy:
         condition: service_healthy
     shm_size: ${NGINX_SHM_SIZE:-1gb}
     restart: unless-stopped
+    logging: *logging
     networks:
       - rbt-network
     healthcheck:

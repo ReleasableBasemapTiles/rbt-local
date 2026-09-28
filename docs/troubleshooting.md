@@ -30,29 +30,39 @@ This means you need administrator privileges.
 
 ## "Cannot connect to AWS" Error
 
-- **Solution**: Make sure you've configured AWS CLI with `aws configure --profile rbt`
+- **Solution**: Make sure you've configured AWS CLI with `aws configure --profile rbt`, and that the download uses that profile: set `AWS_PROFILE=rbt` in `.env` for the deploy scripts (see [.env.example](../.env.example)), or add `--profile rbt` to `aws s3` commands you run yourself. `aws s3 ls s3://<bucket-path>/ --profile rbt` checks the credentials and the bucket path together.
 
 ## Every `/mapproxy/*` Request Returns a 502 Bad Gateway
 
-This means the `mapproxy` container isn't listening where nginx expects it (`mapproxy:5000`).
+This means nginx can't reach MapProxy at `mapproxy:5000`: the container is stopped, restarting, or still starting.
 
-- **Solution**: Run `docker compose logs mapproxy` and confirm uWSGI started and bound its socket. If you've modified `mapproxy/config/uwsgi.ini` or the `mapproxy` service in `docker-compose.yaml`, compare against this repository's defaults -- the image needs an explicit `uwsgi --ini /mapproxy/config/uwsgi.ini` command; its own default command starts a development-only server that doesn't match what nginx expects.
+- **Solution**: Run `docker compose ps mapproxy` and `docker compose logs mapproxy`. uWSGI exits when MapProxy can't load its configuration, and the log names the file and the error -- fix it, then run `docker compose up -d`. If you've modified `mapproxy/config/uwsgi.ini` (its `http-socket` must stay on port 5000) or the `mapproxy` service in `docker-compose.yaml`, compare against this repository's defaults.
 
 ## TileserverGL Shows No Styles, or Styles Render Blank
 
-- **Solution**: Confirm `tileserver/data/3857/TERRAIN.mbtiles` and `tileserver/data/3857/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/3857/`). A partial download loads without error but renders blank or incomplete tiles. (With `--4087`/`-Use4087`, also check `tileserver/data/4087/`.)
+- **Solution**: Confirm `tileserver/data/3857/TERRAIN.mbtiles` and `tileserver/data/3857/RBT.mbtiles` exist and are fully downloaded (`ls -lh tileserver/data/3857/`). A partial download loads without error but renders blank or incomplete tiles. (With `--4087`/`-Use4087`, also check `tileserver/data/4087/`.) After replacing a file, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`) so TileserverGL reopens it and nginx drops the blank tiles it cached -- see the next section.
+
+## Maps Still Show Old Data or an Old Style
+
+nginx keeps each map image it serves for 30 days (see [Tile Caching](architecture.md#tile-caching)), and TileserverGL reads MBTiles and styles only at startup, so neither notices when you replace them.
+
+- **Solution**: Run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`), adding `--4087`/`-Use4087` for the EPSG:4087 deployment: it restarts TileserverGL and empties nginx's cache. Browsers and GIS clients keep their own tile caches too -- reload without them (Ctrl+Shift+R in a browser, or clear QGIS's network cache under **Settings -> Options -> Network**).
 
 ## The 4087 Stack Is Up, but EPSG:4326 Tiles Look Unchanged
 
-This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../docker-compose.4087.yaml)). The MapProxy image's WSGI entry point always loads `/mapproxy/config/mapproxy.yaml` inside the container and ignores any command-line argument -- there is no environment variable or flag to point it at a different file. `docker-compose.4087.yaml`'s `mapproxy` service selects [mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml) by bind-mounting it directly onto that path. If that mount is ever removed or reordered, MapProxy silently falls back to the regular `mapproxy.yaml` -- containers stay healthy and nothing errors, but the EPSG:4326 caches keep reprojecting from EPSG:3857 and `tileservergl4087` never receives requests from MapProxy.
+This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../docker-compose.4087.yaml)). MapProxy loads the file named by the `MAPPROXY_CONFIG` environment variable, which `docker-compose.4087.yaml` sets to [mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml). Without it, MapProxy loads the regular `mapproxy.yaml`: containers stay healthy and nothing errors, but the EPSG:4326 caches keep reprojecting from EPSG:3857 and `tileservergl4087` never receives requests from MapProxy.
 
-- **Solution**: Confirm the mount is in place and the right file is loaded:
+- **Solution**: Check that the variable is set, and that MapProxy read the file -- it logs each config file it reads at startup (if the log has rotated since then, `docker restart mapproxy` first):
 
   ```bash
-  docker exec mapproxy head -1 /mapproxy/config/mapproxy.yaml
-  # expect: "# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its"
-  # if instead you see something like "services:", mapproxy.yaml (not mapproxy.4087.yaml) is loaded
+  docker exec mapproxy printenv MAPPROXY_CONFIG
+  # expect: /mapproxy/config/mapproxy.4087.yaml
+  docker logs mapproxy 2>&1 | grep -o 'reading: .*' | sort -u
+  # expect: reading: /mapproxy/config/mapproxy.4087.yaml
+  #         reading: /mapproxy/config/mapproxy.yaml       (the file it builds on)
   ```
+
+  If `printenv` prints nothing, the stack was started without `docker-compose.4087.yaml`: deploy with `-f docker-compose.yaml -f docker-compose.4087.yaml` (or `--4087`/`-Use4087`). If it prints the path but MapProxy only read `mapproxy.yaml`, the `mapproxy` image predates `MAPPROXY_CONFIG`: rebuild it with `docker compose ... build mapproxy` and recreate the container (the deploy scripts always rebuild it).
 
   Then confirm MapProxy is actually querying the second tileserver:
 
@@ -61,13 +71,13 @@ This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../doc
   docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
   ```
 
-  If the wrong config is loaded, check the `mapproxy` service's `volumes` in `docker-compose.4087.yaml` for a bind mount of `./mapproxy/config/mapproxy.4087.yaml` onto `/mapproxy/config/mapproxy.yaml`, and confirm you're deploying with `-f docker-compose.4087.yaml` (or `--4087`/`-Use4087`) rather than the default `docker-compose.yaml`.
+  On the Helm chart, use the `head -1` check in [Deploying to OpenShift](deployment-openshift.md#verifying-its-working) instead.
 
-## `mapproxy` Container Exits, or Can't Write Its Cache
+## `mapproxy` Container Exits, or Can't Write Its Lock Files
 
 On **Linux or WSL2**, this is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
 
-- **Solution (Linux/WSL2)**: Re-run the `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks` step from the [Linux](install-linux.md) or [Windows WSL2](install-windows.md#option-b-wsl2) setup instructions, then `docker compose restart mapproxy`.
+- **Solution (Linux/WSL2)**: Re-run the permissions step (`mkdir -p mapproxy/data`, then `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks`) from the [Linux](install-linux.md) or [Windows WSL2](install-windows.md#option-b-wsl2) setup instructions, or `./deploy.sh --perm`, then `docker compose restart mapproxy`. If the log shows a configuration error instead, see the 502 section above.
 - **Solution (macOS or native Windows)**: There's no uid/gid mismatch to fix here -- Docker Desktop's VM writes to bind-mounted host directories regardless of host file permissions/ACLs. Instead, run `docker compose logs mapproxy` and check Docker Desktop's **Settings -> Resources -> File sharing** includes the drive/volume you cloned this repository onto.
 
 ## Windows (WSL2): Containers Are Extremely Slow, or Permission Changes Don't Stick
@@ -83,6 +93,21 @@ Docker Desktop uses the WSL2 platform's shared utility VM for its engine on Wind
 ## macOS: Docker Desktop Runs Out of Memory
 
 - **Solution**: Open Docker Desktop's **Settings -> Resources -> Advanced** and increase the memory limit, then apply and restart the engine.
+
+## TileserverGL Uses Too Much Memory, or Renders Slowly Under Load
+
+TileserverGL renders raster tiles with pools of MapLibre renderers: one pool per style, per scale factor (`@2x` tiles have their own) and per request type (tiles and static maps). [`tileserver/config/config.json`](../tileserver/config/config.json) sizes them:
+
+- `minRendererPoolSizes` (`[4, 2]`): renderers each 1x and 2x pool creates at startup and keeps -- 6 styles x 2 request types x (4 + 2) = 72 in total.
+- `maxRendererPoolSizes` (`[16, 8]`): how far each pool grows under load before requests queue.
+- `maxScaleFactor` (`2`): the largest `@Nx` suffix served; `@3x` and up are rejected. None of the setups in [Connecting GIS Clients](gis-clients.md) requests more than `@2x`.
+
+To tune them:
+
+- **Too much memory**: lower the `maxRendererPoolSizes` entries, and the `minRendererPoolSizes` ones for fewer idle renderers.
+- **Slow at the start of a burst**: raise `minRendererPoolSizes` towards `maxRendererPoolSizes`, memory permitting, so fewer renderers are created on demand. TileserverGL's own defaults are `[8, 4, 2]`, `[16, 8, 4]` and `3` (168 renderers at startup here).
+
+Restart TileserverGL after editing (`docker compose restart tileservergl`, plus `tileservergl4087` in the [EPSG:4087 stack](deployment-4087.md)). For the Helm chart, re-run `charts/rbt/sync-files.sh` and upgrade the release.
 
 ## `deploy.sh --init` Times Out Waiting for the Docker Engine (macOS)
 

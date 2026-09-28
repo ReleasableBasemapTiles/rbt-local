@@ -2,7 +2,8 @@
 #
 # Bootstrap a native Windows 11 host and deploy the RBT Docker Compose stack
 # using Chocolatey and Docker Desktop -- no WSL2 Linux distribution needed.
-# See README.md for the manual equivalent of each step, or run with -Help.
+# See docs/install-windows.md for the manual equivalent of each step, or run
+# with -Help.
 #
 #   $env:S3_BUCKET_RBT = 'my-bucket'; $env:S3_BUCKET_TERRAIN = 'my-other-bucket'; .\deploy.ps1
 #
@@ -15,6 +16,7 @@ param(
     [switch]$Init,
     [switch]$Download,
     [switch]$Prep,
+    [switch]$Refresh,
     [switch]$Deploy,
     [switch]$Force,
     [switch]$NoNginx,
@@ -24,25 +26,38 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Native commands' exit codes are checked explicitly via $LASTEXITCODE below;
+# keep PowerShell 7.3+'s opt-in "non-zero exit code throws" behaviour from
+# pre-empting those checks if a profile turned it on.
+$PSNativeCommandUseErrorActionPreference = $false
 
 function Show-Usage {
     @'
 deploy.ps1 - Bootstrap a native Windows 11 host and deploy the RBT Docker Compose stack.
 
-With no switches, all four steps below run in order. Pass one or more step
+With no step switches, -Init, -Download, -Prep, and -Deploy run in order
+(plus -Refresh whenever -Download fetched new data). Pass one or more step
 switches to run only those steps (still in the order listed here, regardless
 of the order given on the command line):
 
-  -Init      Install prerequisites via Chocolatey: AWS CLI v2, Git + Git LFS,
-             the WSL2 platform (enabled with no Linux distribution -- Docker
+  -Init      Install prerequisites via Chocolatey: AWS CLI v2, Git, the WSL2
+             platform (enabled with no Linux distribution -- Docker
              Desktop's own internal VM is all that needs it), and Docker
              Desktop (WSL2 engine).
   -Download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
-             tileserver\data\3857\.
+             tileserver\data\3857\. Whenever this actually fetches a file,
+             -Refresh runs too.
   -Prep      Create the mapproxy/nginx/tileserver runtime directories and
              normalize their config files to LF line endings (uWSGI refuses
              to start if uwsgi.ini has Windows CRLF endings).
-  -Deploy    Run `docker compose up -d`.
+  -Refresh   Make the stack serve the current data: recreate any running
+             tileservergl container (it reads MBTiles and styles only at
+             startup) and empty nginx's tile cache, restarting nginx if it
+             is running. Run this yourself after changing MBTiles or styles
+             by hand.
+  -Deploy    Start Docker Desktop if it isn't running, then run
+             `docker compose up -d --wait`, failing if any service doesn't
+             become healthy.
   -Force     Re-download mbtiles even if already present (only relevant
              together with -Download, or with no step switches).
   -NoNginx   Deploy mapproxy and tileservergl only, without the local nginx
@@ -50,11 +65,12 @@ of the order given on the command line):
              AWS ALB and/or CloudFront) talks HTTP directly to mapproxy
              (port 8081 by default) and tileservergl (port 8080 by default)
              instead. Only relevant with -Deploy, or with no step switches.
-  -Use4087   Deploy docker-compose.4087.yaml instead of docker-compose.yaml
-             -- adds a second TileserverGL container (tileservergl4087)
-             serving EPSG:4087 MBTiles, and points mapproxy at
-             mapproxy.4087.yaml so its EPSG:4326 caches reproject from
-             EPSG:4087 instead of EPSG:3857 (see docs/deployment-4087.md).
+  -Use4087   Also deploy docker-compose.4087.yaml, an overlay on
+             docker-compose.yaml that adds a second TileserverGL container
+             (tileservergl4087) serving EPSG:4087 MBTiles, and points
+             mapproxy at mapproxy.4087.yaml so its EPSG:4326 caches
+             reproject from EPSG:4087 instead of EPSG:3857 (see
+             docs/deployment-4087.md).
              Combines with -NoNginx and -Force. With -Download (or no step
              switches), also downloads the EPSG:4087 RBT.mbtiles/
              TERRAIN.mbtiles into tileserver\data\4087\.
@@ -65,6 +81,7 @@ Usage:
   .\deploy.ps1
   .\deploy.ps1 -Init                  # just install prerequisites
   .\deploy.ps1 -Download -Prep        # just refresh data + runtime dirs
+  .\deploy.ps1 -Refresh               # reload styles/MBTiles, purge cache
   .\deploy.ps1 -Deploy                # just (re)start the stack
   .\deploy.ps1 -Force                 # full run, force re-download
   .\deploy.ps1 -NoNginx               # full run, skip the local nginx
@@ -73,9 +90,9 @@ Usage:
 
 Run this from an elevated (Administrator) PowerShell only when using -Init
 (or with no step switches, since -Init then runs too) -- installing software
-and enabling the WSL2 platform both need it. -Download, -Prep, and -Deploy
-do not need elevation. Unlike Linux `sudo`, Windows elevation keeps your
-normal user profile active, so `aws s3 cp` still uses your own AWS
+and enabling the WSL2 platform both need it. -Download, -Prep, -Refresh, and
+-Deploy do not need elevation. Unlike Linux `sudo`, Windows elevation keeps
+your normal user profile active, so `aws s3 cp` still uses your own AWS
 credential chain (%USERPROFILE%\.aws\credentials, environment variables, or
 AWS_PROFILE) exactly as it would in a non-elevated shell -- nothing here
 configures AWS credentials for you.
@@ -99,7 +116,8 @@ Re-running this script is safe: package installs are skipped when already
 present. TERRAIN.mbtiles is only downloaded once (it never changes upstream).
 RBT.mbtiles is re-downloaded automatically whenever the S3 object's
 LastModified time is newer than the local copy's -- pass -Force to
-re-download either file unconditionally.
+re-download either file unconditionally. Either way, a download that
+fetched anything is followed by -Refresh.
 '@
 }
 
@@ -208,6 +226,21 @@ function Import-DotEnv {
 # Prerequisites
 # ---------------------------------------------------------------------------
 
+# Runs `docker info` and returns whether the engine answered. Windows
+# PowerShell 5.1 turns every stderr line of a native command whose output is
+# redirected into an error record, which the script-wide
+# $ErrorActionPreference = 'Stop' makes fatal -- so a stopped engine ("error
+# during connect") would abort the script instead of returning $false.
+# Setting it to 'Continue' here only affects this function's scope.
+function Test-DockerEngineRunning {
+    if (-not (Test-CommandExists 'docker')) {
+        return $false
+    }
+    $ErrorActionPreference = 'Continue'
+    docker info *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Test-DockerComposeAvailable {
     if (-not (Test-CommandExists 'docker')) {
         return $false
@@ -234,8 +267,7 @@ function Test-PrereqsInstalled {
     return (Test-CommandExists 'aws') -and
         (Test-CommandExists 'docker') -and
         (Test-DockerComposeAvailable) -and
-        (Test-CommandExists 'git') -and
-        (Test-CommandExists 'git-lfs')
+        (Test-CommandExists 'git')
 }
 
 function Install-Chocolatey {
@@ -271,19 +303,18 @@ function Install-AwsCli {
     Update-Path
 }
 
-function Install-GitWithLfs {
-    if ((Test-CommandExists 'git') -and (Test-CommandExists 'git-lfs')) {
-        Write-DeployLog "Git + Git LFS already installed ($(git --version)); skipping"
+function Install-Git {
+    if (Test-CommandExists 'git') {
+        Write-DeployLog "Git already installed ($(git --version)); skipping"
         return
     }
 
-    Write-DeployLog "Installing Git for Windows + Git LFS (choco package: git, /NoAutoCrlf so checkouts respect this repo's .gitattributes)"
+    Write-DeployLog "Installing Git for Windows (choco package: git, /NoAutoCrlf so checkouts respect this repo's .gitattributes)"
     choco install git -y --no-progress --params "'/NoAutoCrlf'"
     if ($LASTEXITCODE -ne 0) {
         Write-ErrorAndExit "choco install git failed (exit $LASTEXITCODE)"
     }
     Update-Path
-    git lfs install --system
 }
 
 function Install-WslPlatform {
@@ -344,8 +375,7 @@ function Start-DockerDesktopAndWait {
         return
     }
 
-    docker info *> $null
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-DockerEngineRunning) {
         Write-DeployLog 'Docker engine is already running'
         return
     }
@@ -361,8 +391,7 @@ function Start-DockerDesktopAndWait {
     $maxWaitSeconds = 180
     $waited = 0
     while ($waited -lt $maxWaitSeconds) {
-        docker info *> $null
-        if ($LASTEXITCODE -eq 0) {
+        if (Test-DockerEngineRunning) {
             Write-DeployLog 'Docker engine is up'
             return
         }
@@ -375,13 +404,13 @@ function Start-DockerDesktopAndWait {
 
 function Install-Prerequisites {
     if (Test-PrereqsInstalled) {
-        Write-DeployLog 'All prerequisites already installed (aws, docker, docker compose, git, git-lfs); skipping setup'
+        Write-DeployLog 'All prerequisites already installed (aws, docker, docker compose, git); skipping setup'
         return
     }
 
     Install-Chocolatey
     Install-AwsCli
-    Install-GitWithLfs
+    Install-Git
     Install-WslPlatform
     Install-DockerDesktop
 
@@ -428,6 +457,9 @@ function Get-S3ObjectKey {
 # GetObject but not this HeadObject call.
 function Get-RemoteMTimeUtc {
     param([string]$RemoteUri)
+    # A failed head-object prints to stderr, which 2>$null would make fatal
+    # under 'Stop' on Windows PowerShell 5.1 -- see Test-DockerEngineRunning.
+    $ErrorActionPreference = 'Continue'
     $bucket = Get-S3BucketName $RemoteUri
     $key = Get-S3ObjectKey $RemoteUri
     $lastModified = aws s3api head-object --bucket $bucket --key $key --query 'LastModified' --output text 2>$null
@@ -493,6 +525,7 @@ function Get-MbtilesFile {
     if ($LASTEXITCODE -ne 0) {
         Write-ErrorAndExit "aws s3 cp $remoteUri failed (exit $LASTEXITCODE)"
     }
+    $script:DataUpdated = $true
 }
 
 function Get-AllMbtiles {
@@ -539,8 +572,6 @@ function Initialize-RuntimeDirectories {
         'mapproxy/locks',
         'mapproxy/tile_locks',
         'nginx/cache',
-        'nginx/logs',
-        'nginx/run',
         'tileserver/data/3857'
     )
     foreach ($dir in $dirs) {
@@ -600,45 +631,117 @@ function Initialize-RuntimeEnvironment {
 # Deploy
 # ---------------------------------------------------------------------------
 
-# Returns the base compose file path -- docker-compose.4087.yaml with
-# -Use4087, else docker-compose.yaml. docker-compose.override.yaml (nginx)
-# layers on top of either one identically, since both declare the same
-# service names.
-function Get-BaseComposeFile {
-    if ($script:Use4087) {
-        return (Join-RepoPath 'docker-compose.4087.yaml')
+# The `docker compose ...` prefix to show in the hints printed at the end:
+# bare for the default stack (Compose auto-discovers docker-compose.yaml +
+# docker-compose.override.yaml by itself), else with this run's -f list.
+function Get-ComposeHint {
+    if ($script:WithNginx -and -not $script:Use4087) {
+        return 'docker compose'
     }
-    return (Join-RepoPath 'docker-compose.yaml')
+    $fileArgs = $script:ComposeFileNames | ForEach-Object { "-f $_" }
+    return "docker compose $($fileArgs -join ' ')"
+}
+
+# Returns the names of this stack's running services (none when the engine
+# itself isn't running). Compose writes warnings to stderr, hence the local
+# 'Continue' -- see Test-DockerEngineRunning.
+function Get-RunningServices {
+    if (-not (Test-DockerEngineRunning)) {
+        return @()
+    }
+    $ErrorActionPreference = 'Continue'
+    $names = docker compose @script:ComposeFileArgs ps --status running --services 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return @()
+    }
+    return @($names | Where-Object { $_ })
+}
+
+# nginx caches tiles for 30 days (see nginx/config/nginx.conf) and can't tell
+# when the MBTiles or styles behind them change, and tileservergl only reads
+# both at startup. So after either changes, this recreates whichever
+# tileserver containers are running and empties nginx's tile cache,
+# restarting nginx around the purge if it's running. Services that aren't
+# running are left for -Deploy (or you) to start with the new data. Mirrors
+# deploy.sh's refresh_stack.
+function Update-ServedData {
+    $running = @(Get-RunningServices)
+    $didSomething = $false
+
+    $recreate = @($script:TileserverServices | Where-Object { $running -contains $_ })
+    if ($recreate.Count -gt 0) {
+        Write-DeployLog "Recreating $($recreate -join ' ') to load the new data"
+        docker compose @script:ComposeFileArgs up -d --no-deps --force-recreate --wait --wait-timeout 600 @recreate
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorAndExit "$($recreate -join ' ') did not become healthy again -- see '$(Get-ComposeHint) logs $($recreate -join ' ')'."
+        }
+        $didSomething = $true
+    }
+
+    $nginxRunning = $script:WithNginx -and ($running -contains 'nginx')
+    if ($nginxRunning) {
+        # Stopped while its cache is emptied; the restart also resets its
+        # in-memory cache index (a reload wouldn't) and makes it re-resolve
+        # the recreated tileserver containers' addresses.
+        docker compose @script:ComposeFileArgs stop nginx
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorAndExit "docker compose stop nginx failed (exit $LASTEXITCODE)"
+        }
+    }
+
+    $cacheDir = Join-RepoPath 'nginx/cache/tile_cache'
+    if (Test-Path $cacheDir -PathType Container) {
+        Write-DeployLog "Purging the nginx tile cache ($cacheDir)"
+        Get-ChildItem -LiteralPath $cacheDir -Force | Remove-Item -Recurse -Force
+        $didSomething = $true
+    }
+
+    if ($nginxRunning) {
+        Write-DeployLog 'Restarting nginx'
+        docker compose @script:ComposeFileArgs up -d --no-deps --wait --wait-timeout 600 nginx
+        if ($LASTEXITCODE -ne 0) {
+            Write-ErrorAndExit "nginx did not become healthy again -- see '$(Get-ComposeHint) logs nginx'."
+        }
+        $didSomething = $true
+    }
+
+    if (-not $didSomething) {
+        Write-DeployLog 'Nothing to refresh: no tileserver or nginx is running and nginx has no tile cache yet'
+    }
 }
 
 function Start-Stack {
-    $composeFiles = @('-f', (Get-BaseComposeFile))
-    if ($script:WithNginx) {
-        $composeFiles += @('-f', (Join-RepoPath 'docker-compose.override.yaml'))
-    } else {
+    if (-not $script:WithNginx) {
         Write-DeployLog 'Deploying without nginx -- mapproxy and tileservergl publish their own ports directly'
     }
+    if (-not (Test-CommandExists 'docker')) {
+        Write-ErrorAndExit 'docker.exe not found on PATH -- run .\deploy.ps1 -Init from an elevated PowerShell first, or open a new PowerShell window if Docker Desktop was only just installed.'
+    }
+    Start-DockerDesktopAndWait
 
     Write-DeployLog 'Building the mapproxy image'
-    docker compose @composeFiles build mapproxy
+    docker compose @script:ComposeFileArgs build mapproxy
     if ($LASTEXITCODE -ne 0) {
         Write-ErrorAndExit "docker compose build mapproxy failed (exit $LASTEXITCODE)"
     }
 
     Write-DeployLog 'Pulling remaining images'
-    docker compose @composeFiles pull --ignore-buildable
+    docker compose @script:ComposeFileArgs pull --ignore-buildable
     if ($LASTEXITCODE -ne 0) {
         Write-ErrorAndExit "docker compose pull failed (exit $LASTEXITCODE)"
     }
 
-    Write-DeployLog 'Starting the RBT stack'
-    docker compose @composeFiles up -d
+    # --wait blocks until every service passes its healthcheck, so a service
+    # that can't start fails the deploy here instead of hiding behind "Done.".
+    Write-DeployLog 'Starting the RBT stack and waiting for it to become healthy'
+    docker compose @script:ComposeFileArgs up -d --wait --wait-timeout 600
     if ($LASTEXITCODE -ne 0) {
-        Write-ErrorAndExit "docker compose up failed (exit $LASTEXITCODE)"
+        docker compose @script:ComposeFileArgs ps
+        Write-ErrorAndExit "The RBT stack did not become healthy within 10 minutes -- see '$(Get-ComposeHint) logs <service>' for the unhealthy service above."
     }
 
     Write-DeployLog 'Current service status'
-    docker compose @composeFiles ps
+    docker compose @script:ComposeFileArgs ps
 }
 
 # ---------------------------------------------------------------------------
@@ -669,6 +772,10 @@ $script:ForceDownload = [bool]$Force
 $script:WithNginx = -not [bool]$NoNginx
 $script:Use4087 = [bool]$Use4087
 $script:RebootRequired = $false
+# Set by Get-MbtilesFile whenever it actually downloads a file, so the
+# refresh step knows the running tileservers (and nginx's tile cache) are
+# now stale.
+$script:DataUpdated = $false
 
 $reRunSwitches = $PSBoundParameters.Keys | Where-Object { $PSBoundParameters[$_] } | ForEach-Object { "-$_" }
 $script:ReRunCommand = if ($reRunSwitches) { ".\deploy.ps1 $($reRunSwitches -join ' ')" } else { '.\deploy.ps1' }
@@ -676,9 +783,12 @@ $script:ReRunCommand = if ($reRunSwitches) { ".\deploy.ps1 $($reRunSwitches -joi
 $runInit = [bool]$Init
 $runDownload = [bool]$Download
 $runPrep = [bool]$Prep
+$runRefresh = [bool]$Refresh
 $runDeploy = [bool]$Deploy
-$stepSelected = $runInit -or $runDownload -or $runPrep -or $runDeploy
+$stepSelected = $runInit -or $runDownload -or $runPrep -or $runRefresh -or $runDeploy
 
+# No step switches given -- run the whole thing (-Refresh is added below only
+# if the download step fetches new data).
 if (-not $stepSelected) {
     $runInit = $true
     $runDownload = $true
@@ -690,11 +800,25 @@ if ($env:OS -ne 'Windows_NT') {
     Write-WarningLine 'This script is designed for native Windows 11; continuing anyway.'
 }
 
-if (-not (Test-Path (Join-RepoPath 'docker-compose.yaml'))) {
-    Write-ErrorAndExit 'docker-compose.yaml not found next to this script -- run it from inside the rbt-local repo checkout.'
+# The compose files (and tileserver services) this run's stack is made of, in
+# merge order: docker-compose.yaml, then the docker-compose.4087.yaml overlay
+# (-Use4087), then docker-compose.override.yaml (nginx, unless -NoNginx).
+$script:ComposeFileNames = @('docker-compose.yaml')
+$script:TileserverServices = @('tileservergl')
+if ($script:Use4087) {
+    $script:ComposeFileNames += 'docker-compose.4087.yaml'
+    $script:TileserverServices += 'tileservergl4087'
 }
-if ($script:Use4087 -and -not (Test-Path (Join-RepoPath 'docker-compose.4087.yaml'))) {
-    Write-ErrorAndExit 'docker-compose.4087.yaml not found next to this script -- run it from inside the rbt-local repo checkout.'
+if ($script:WithNginx) {
+    $script:ComposeFileNames += 'docker-compose.override.yaml'
+}
+$script:ComposeFileArgs = @()
+foreach ($name in $script:ComposeFileNames) {
+    $composeFile = Join-RepoPath $name
+    if (-not (Test-Path $composeFile -PathType Leaf)) {
+        Write-ErrorAndExit "$name not found next to this script -- run it from inside the rbt-local repo checkout."
+    }
+    $script:ComposeFileArgs += @('-f', $composeFile)
 }
 
 try {
@@ -728,36 +852,34 @@ if ($runDownload) {
 }
 
 if ($runInit) { Install-Prerequisites }
-if ($runDownload) { Get-AllMbtiles }
+if ($runDownload) {
+    Get-AllMbtiles
+    if ($script:DataUpdated) { $runRefresh = $true }
+}
 if ($runPrep) { Initialize-RuntimeEnvironment }
+if ($runRefresh) { Update-ServedData }
 if ($runDeploy) { Start-Stack }
 
 Write-DeployLog 'Done.'
-if ($runDeploy -and -not $script:WithNginx) {
-    $baseFile = Get-BaseComposeFile
-    $mapproxyPort = if ($env:MAPPROXY_PORT) { $env:MAPPROXY_PORT } else { '8081' }
-    $tileserverPort = if ($env:TILESERVER_PORT) { $env:TILESERVER_PORT } else { '8080' }
-    Write-Host "  Logs:      docker compose -f $baseFile logs -f"
-    Write-Host "  MapProxy:  curl.exe -fsS http://localhost:$mapproxyPort/wmts/1.0.0/WMTSCapabilities.xml"
-    Write-Host "  Tiles:     curl.exe -fsS http://localhost:$tileserverPort/"
-    if ($script:Use4087) {
-        $tileserver4087Port = if ($env:TILESERVER_4087_PORT) { $env:TILESERVER_4087_PORT } else { '8083' }
-        Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$tileserver4087Port/"
+if ($runDeploy) {
+    $composeCmd = Get-ComposeHint
+    Write-Host "  Logs:     $composeCmd logs -f"
+    if ($script:WithNginx) {
+        $nginxPort = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
+        Write-Host "  Health:   curl.exe -fsS http://localhost:$nginxPort/healthz"
+        Write-Host "  WMTS:     http://localhost:$nginxPort/mapproxy/wmts/1.0.0/WMTSCapabilities.xml"
+        if ($script:Use4087) {
+            Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$nginxPort/tileservergl4087/"
+        }
+    } else {
+        $mapproxyPort = if ($env:MAPPROXY_PORT) { $env:MAPPROXY_PORT } else { '8081' }
+        $tileserverPort = if ($env:TILESERVER_PORT) { $env:TILESERVER_PORT } else { '8080' }
+        Write-Host "  MapProxy: curl.exe -fsS http://localhost:$mapproxyPort/wmts/1.0.0/WMTSCapabilities.xml"
+        Write-Host "  Tiles:    curl.exe -fsS http://localhost:$tileserverPort/"
+        if ($script:Use4087) {
+            $tileserver4087Port = if ($env:TILESERVER_4087_PORT) { $env:TILESERVER_4087_PORT } else { '8083' }
+            Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$tileserver4087Port/"
+        }
     }
-    Write-Host "  Stop:      docker compose -f $baseFile down --remove-orphans"
-} elseif ($runDeploy -and $script:Use4087) {
-    # docker compose only auto-discovers docker-compose.yaml/.override.yaml,
-    # not docker-compose.4087.yaml, so -f must stay explicit here.
-    $baseFile = Get-BaseComposeFile
-    $overrideFile = Join-RepoPath 'docker-compose.override.yaml'
-    $nginxPort = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
-    Write-Host "  Logs:   docker compose -f $baseFile -f $overrideFile logs -f"
-    Write-Host "  Health: curl.exe -fsS http://localhost:$nginxPort/healthz"
-    Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$nginxPort/tileservergl4087/"
-    Write-Host "  Stop:   docker compose -f $baseFile -f $overrideFile down --remove-orphans"
-} elseif ($runDeploy) {
-    $nginxPort = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
-    Write-Host "  Logs:   docker compose logs -f"
-    Write-Host "  Health: curl.exe -fsS http://localhost:$nginxPort/healthz"
-    Write-Host "  Stop:   docker compose down --remove-orphans"
+    Write-Host "  Stop:     $composeCmd down --remove-orphans"
 }

@@ -45,7 +45,11 @@ ARG MAMBA_DOCKERFILE_ACTIVATE=1
 ARG MAPPROXY_VERSION=7.0.0
 # --no-deps: MapProxy is not on conda-forge; its PyPI deps include pyproj,
 # whose wheels bundle a private PROJ and would undo the >=9.8 pin above.
+# So pip never installs MapProxy's requirements: `pip check` fails the build
+# if environment.yml stops providing one, and the base-config load below
+# proves MapProxy imports and builds its WSGI app against these libraries.
 RUN pip install --no-cache-dir --no-deps "MapProxy==${MAPPROXY_VERSION}" && \
+    pip check && \
     python -c "\
 import pyproj; \
 print('PROJ', pyproj.__proj_version__); \
@@ -53,13 +57,24 @@ assert tuple(int(p) for p in pyproj.__proj_version__.split('.')[:2]) >= (9, 8), 
 from pyproj import Transformer; \
 _, y = Transformer.from_crs(4326, 4087, always_xy=True).transform(10, 5); \
 print('EPSG:4087 Y(10,5) =', y); \
-assert abs(y - 552885.45) < 1, y"
+assert abs(y - 552885.45) < 1, y" && \
+    mapproxy-util create -t base-config /tmp/mapproxy-smoke && \
+    python -c "\
+from mapproxy.wsgiapp import make_wsgi_app; \
+make_wsgi_app('/tmp/mapproxy-smoke/mapproxy.yaml')" && \
+    rm -rf /tmp/mapproxy-smoke
 
 WORKDIR /mapproxy
 COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/docker/app.py /mapproxy/app.py
 
 # Numeric USER -- OpenShift validates this; Compose/Helm already run as 1000.
 USER 1000
+
+# Defaults for uwsgi.ini's $(UWSGI_*) settings, so the image also runs on its
+# own. docker-compose.yaml and the Helm chart set their own values.
+ENV UWSGI_PROCESSES=8 \
+    UWSGI_THREADS=4 \
+    UWSGI_CHEAPER=4
 
 # micromamba ENTRYPOINT activates the env for Compose `command:`.
 CMD ["uwsgi", "--ini", "/mapproxy/config/uwsgi.ini"]

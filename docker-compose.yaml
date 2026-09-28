@@ -1,3 +1,13 @@
+# Docker's default json-file log driver never rotates, and nginx and
+# TileserverGL log every request, so each container keeps 3 x 10 MB. YAML
+# anchors don't cross files: docker-compose.override.yaml and
+# docker-compose.4087.yaml repeat this block.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mapproxy:
     # Built locally from Dockerfile.mapproxy: Python 3.14 + conda-forge
@@ -17,6 +27,7 @@ services:
     environment:
       - UWSGI_PROCESSES=${UWSGI_PROCESSES:-8}
       - UWSGI_THREADS=${UWSGI_THREADS:-4}
+      - UWSGI_CHEAPER=${UWSGI_CHEAPER:-4}
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${MAPPROXY_PORT:-8081}:5000"
     volumes:
@@ -29,10 +40,13 @@ services:
         condition: service_healthy
     shm_size: ${MAPPROXY_SHM_SIZE:-2gb}
     restart: unless-stopped
+    logging: *logging
     networks:
       - rbt-network
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000"]
+      # MapProxy's start page only answers 200 once a uWSGI worker has loaded
+      # the config; a TCP connect would pass as soon as the master listens.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -52,6 +66,7 @@ services:
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped
+    logging: *logging
     shm_size: ${TILESERVER_SHM_SIZE:-2gb}
     networks:
       - rbt-network

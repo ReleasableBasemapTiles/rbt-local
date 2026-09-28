@@ -3,3 +3,8 @@
 .DS_Store
 
 *.mbtiles
+
+# An interrupted `aws s3 cp` leaves <name>.mbtiles.<random>, and SQLite
+# may add -journal/-wal/-shm files next to an open database.
+*.mbtiles.*
+*.mbtiles-*

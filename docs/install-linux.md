@@ -7,9 +7,10 @@ Run the block below that matches your distribution family to install the require
 ## Fedora/RHEL/CentOS
 
 ```bash
-# Download and install AWS CLI
+# Download and install AWS CLI v2 for this machine's architecture
+# (x86_64 or aarch64)
 sudo dnf install unzip -y;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     sudo ./aws/install
 
@@ -20,75 +21,90 @@ sudo dnf remove docker docker-client \
     docker-logrotate docker-selinux \
     docker-engine-selinux docker-engine
 
-# Install Docker repository management tools
-sudo dnf -y install dnf-plugins-core
+# Add Docker's official repository. Set DOCKER_DISTRO to fedora on Fedora,
+# rhel on RHEL, or centos on CentOS Stream, Rocky Linux and AlmaLinux.
+DOCKER_DISTRO=fedora
+if command -v dnf5 > /dev/null; then
+    # dnf5, the default dnf from Fedora 41
+    sudo dnf5 -y install dnf5-plugins
+    sudo dnf5 config-manager addrepo --overwrite \
+        --from-repofile="https://download.docker.com/linux/$DOCKER_DISTRO/docker-ce.repo"
+else
+    sudo dnf -y install dnf-plugins-core
+    sudo dnf config-manager \
+        --add-repo "https://download.docker.com/linux/$DOCKER_DISTRO/docker-ce.repo"
+fi
 
-# Add Docker's official repository
-sudo dnf config-manager \
-    --add-repo \
-    https://download.docker.com/linux/fedora/docker-ce.repo
-
-# Install Docker, Git, and Git LFS
-sudo dnf install docker-ce docker-ce-cli \
+# Install Docker and Git, and start Docker now and at every boot
+sudo dnf install -y docker-ce docker-ce-cli \
     containerd.io docker-buildx-plugin \
-    docker-compose-plugin git-all git-lfs
+    docker-compose-plugin git
+sudo systemctl enable --now docker
 ```
 
 ## Ubuntu/Debian
 
 ```bash
-# Download and install AWS CLI
+# Download and install AWS CLI v2 for this machine's architecture
+# (x86_64 or aarch64)
 sudo apt-get update;
-sudo apt-get install -y unzip ca-certificates curl gnupg lsb-release;
+sudo apt-get install -y unzip ca-certificates curl gnupg;
 sudo update-ca-certificates;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
     unzip awscliv2.zip && \
     sudo ./aws/install;
 
 # Remove old Docker versions (if any exist)
 sudo apt-get remove docker docker-engine docker.io containerd runc;
 
-# Add Docker's official repository
+# Add Docker's official repository: linux/ubuntu (and the Ubuntu release)
+# on Ubuntu and its derivatives, linux/debian on Debian
+DOCKER_DISTRO=$(. /etc/os-release && if [ -n "${UBUNTU_CODENAME:-}" ]; then echo ubuntu; else echo debian; fi);
+DOCKER_SUITE=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}");
 sudo mkdir -m 0755 -p /etc/apt/keyrings;
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg;
+curl -fsSL "https://download.docker.com/linux/$DOCKER_DISTRO/gpg" | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg;
 echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$DOCKER_DISTRO $DOCKER_SUITE stable" \
   | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null;
 sudo chmod a+r /etc/apt/keyrings/docker.gpg;
 
-# Install Docker, Git, and Git LFS
+# Install Docker and Git, and make sure Docker is running
 sudo apt-get update;
 sudo apt-get install -y \
     docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin \
-    git-all git-lfs;
+    git;
+sudo systemctl enable --now docker;
 ```
 
 ## Shared steps (all distributions)
 
-```bash
-# Enable Git LFS support
-git lfs install
+Between cloning and starting the stack, download the map data as described in [Downloading the map data by hand](../README.md#downloading-the-map-data-by-hand) in the main README.
 
+```bash
 # Clone the RBT project
-git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git && \
+git clone https://github.com/ReleasableBasemapTiles/rbt-local.git && \
     cd rbt-local
 
-# The mapproxy container writes to these directories as uid/gid 1000 --
-# the uid baked into the upstream MapProxy image, and also the default
-# uid of the first non-root user on most Linux distributions. Check
-# your own user's ids with `id -u` and `id -g` if you suspect they
-# differ, and substitute below.
+# The mapproxy container runs as uid/gid 1000 (Dockerfile.mapproxy) and
+# writes to these directories, so they belong to 1000:1000 whatever your
+# own uid is. mapproxy/data isn't in the repo, so create it first.
+# (./deploy.sh runs these same steps.)
+mkdir -p mapproxy/data
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
+sudo chmod 775 nginx/cache
 
-# Download the map data (see "Get S3 Credentials" in the main README) before
-# continuing, then start the RBT stack from the rbt-local directory
-docker compose up -d
+# Download the map data (see "Downloading the map data by hand" in the main
+# README), then start the RBT stack from the rbt-local directory. Docker
+# needs root: prefix its commands with sudo, as here, or add yourself to the
+# docker group (root-equivalent access) with `sudo usermod -aG docker $USER`
+# and log out and back in.
+sudo docker compose up -d
 
 # Check logs
-docker compose logs -f
+sudo docker compose logs -f
 
 # Stop the instance
-docker compose down --remove-orphans
+sudo docker compose down --remove-orphans
 ```
