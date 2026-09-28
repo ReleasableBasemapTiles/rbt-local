@@ -80,7 +80,7 @@ git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git && \
 # your own user's ids with `id -u` and `id -g` if you suspect they
 # differ, and substitute below.
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache
 
 # Download the map data (see "Get S3 Credentials" in the main README) before
 # continuing, then start the RBT stack from the rbt-local directory

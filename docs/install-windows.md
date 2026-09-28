@@ -187,7 +187,7 @@ cd rbt-local
 # The mapproxy container writes to these directories as uid/gid 1000,
 # which is also the default uid/gid of the first user WSL creates for you.
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache
 
 # Download the map data (see "Get S3 Credentials" in the main README) before
 # continuing, then start the RBT stack from the rbt-local directory

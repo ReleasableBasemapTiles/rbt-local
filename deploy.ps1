@@ -571,8 +571,6 @@ function Initialize-RuntimeDirectories {
         'mapproxy/locks',
         'mapproxy/tile_locks',
         'nginx/cache',
-        'nginx/logs',
-        'nginx/run',
         'tileserver/data/3857'
     )
     foreach ($dir in $dirs) {

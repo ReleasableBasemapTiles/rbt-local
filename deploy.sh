@@ -613,7 +613,7 @@ download_mbtiles() {
 
 fix_permissions() {
   log "Setting mapproxy/nginx runtime directory permissions"
-  mkdir -p mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+  mkdir -p mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache
 
   if [[ "$OS_FAMILY" == "macos" ]]; then
     log "Skipping chown/chmod on macOS -- Docker Desktop's VirtioFS file sharing maps the host user into the container, so there's no uid/gid mismatch to fix"
@@ -623,9 +623,9 @@ fix_permissions() {
   as_root chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
   as_root chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks
   # nginx's master process runs as root and creates (and chowns) whatever it
-  # needs inside these itself, so only the top level matters -- recursing
+  # needs inside this itself, so only the top level matters -- recursing
   # into nginx/cache would walk every cached tile on every run.
-  as_root chmod 775 nginx/cache nginx/logs nginx/run
+  as_root chmod 775 nginx/cache
 }
 
 # ---------------------------------------------------------------------------
