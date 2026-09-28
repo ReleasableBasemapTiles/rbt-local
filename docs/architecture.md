@@ -56,20 +56,145 @@ The Releasable Basemap Tiles (RBT) is important because the capability can be ea
 
 RBT uses several components working together:
 
-- **TileserverGL**: Serves the map tiles (the actual map images)
-- **MapProxy**: Helps convert between different map formats
+- **TileserverGL**: Draws the map images (tiles) from the map data, in each of RBT's styles
+- **MapProxy**: Republishes those maps through the WMS/WMTS standards that GIS software speaks, in several projections
+- **nginx** (optional): Gives everything a single web address and port, and keeps a copy of each map image it serves so repeat requests are fast
 - **Docker**: Packages everything together so it runs the same on any computer
 - **Docker Compose**: The tool that manages and runs the application's containers together
 
 ## Technical Architecture
 
-RBT is deployed as a containerized application using [TileserverGL](https://github.com/maptiler/tileserver-gl), which uses [MapLibre GL Native](https://maplibre.org/) for server-side rendering and serves vector and raster tiles in **EPSG:3857** (Web Mercator). Additionally, [MapProxy](https://mapproxy.org/) is deployed in front of TileserverGL to cache those raster tiles, exposing them through standard OGC WMS/WMTS endpoints in **EPSG:3857** and, reprojected from that same cache, **EPSG:3395** (World Mercator) and **EPSG:4326** (WGS 84 / geographic). Its WMS also reprojects on the fly to EPSG:4258, CRS:84, and EPSG:900913.
+RBT is deployed as a containerized application using [TileserverGL](https://github.com/maptiler/tileserver-gl), which uses [MapLibre GL Native](https://maplibre.org/) for server-side rendering and serves vector and raster tiles in **EPSG:3857** (Web Mercator). [MapProxy](https://mapproxy.org/) sits in front of TileserverGL and republishes those raster tiles through standard OGC WMS/WMTS endpoints in **EPSG:3857** and, reprojected from them, **EPSG:3395** (World Mercator) and **EPSG:4326** (WGS 84 / geographic). Its WMS also reprojects on the fly to EPSG:4258, CRS:84, and EPSG:900913. MapProxy stores no tiles: in the deployments with nginx, nginx caches the rendered images (see [Tile caching](#tile-caching)).
 
-An alternative deployment ([docs/deployment-4087.md](deployment-4087.md)) adds a second TileserverGL container serving **EPSG:4087** (World Equidistant Cylindrical) MBTiles, and reprojects the EPSG:4326 cache from that EPSG:4087 cache instead of EPSG:3857 -- a pure unit-scale conversion rather than a resample away from EPSG:3857's angular distortion, so EPSG:4326 output is sharper away from the equator.
+An alternative deployment ([docs/deployment-4087.md](deployment-4087.md)) adds a second TileserverGL container serving **EPSG:4087** (World Equidistant Cylindrical) MBTiles, and reprojects the EPSG:4326 layers from those EPSG:4087 tiles instead of EPSG:3857 -- a pure unit-scale conversion rather than a resample away from EPSG:3857's angular distortion, so EPSG:4326 output is sharper away from the equator.
 
 This guide documents a **Docker Compose** deployment suitable for a single host (a workstation, VM, or on-premises server) running macOS, Windows 11, or Linux. You will need S3 credentials from the RBT team to download the MBTiles data that TileserverGL serves.
 
-![RBT_ARCHITECTURE](../images/rbt_architecture.png)
+## Deployment Variants
+
+The README's [Deployment Options](../README.md#deployment-options) compares the four Compose deployments and the Helm chart. Each diagram below shows default ports; every port is configurable in `.env` (see [.env.example](../.env.example)).
+
+### 1. Default: nginx in front of both services
+
+`docker compose up -d`, `./deploy.sh`, and `.\deploy.ps1` all deploy this stack. Compose merges `docker-compose.yaml` with `docker-compose.override.yaml`, which adds the local nginx reverse proxy and tile cache, so everything is reachable through a single port. MapProxy and TileserverGL still publish their own ports too, which is what the [Direct Access](gis-clients.md#3-direct-access-optional) section of the GIS clients guide uses.
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+
+  subgraph stack["docker-compose.yaml + docker-compose.override.yaml"]
+    nginx["nginx<br/>port 8082"]
+    tilecache[("nginx/cache<br/>tile cache")]
+    mapproxy["mapproxy<br/>port 8081<br/>EPSG:3857, plus 3395 and<br/>4326 reprojected from it"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    mbtiles[("tileserver/data/3857")]
+  end
+
+  client -->|"port 8082"| nginx
+  nginx --- tilecache
+  nginx -->|"/mapproxy/* and /"| mapproxy
+  nginx -->|"/tileservergl/*"| tileservergl
+  mapproxy -->|"EPSG:3857 tiles"| tileservergl
+  tileservergl --- mbtiles
+```
+
+### 2. Default without nginx (AWS ALB / CloudFront)
+
+`./deploy.sh --no-nginx`, `.\deploy.ps1 -NoNginx`, or `docker compose -f docker-compose.yaml up -d` names the base file explicitly, which opts out of the automatic override merge, so nginx never starts. MapProxy and TileserverGL each serve their native paths -- no `/mapproxy` or `/tileservergl` prefix -- on their own published port, ready to be used as ALB target groups or CloudFront origins. Nothing is cached: TileserverGL renders every request. See [Advanced: Deploying Without nginx](advanced-deployment.md).
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+  edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
+
+  subgraph stack["docker-compose.yaml only"]
+    mapproxy["mapproxy<br/>port 8081<br/>EPSG:3857, plus 3395 and<br/>4326 reprojected from it"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    mbtiles[("tileserver/data/3857")]
+  end
+
+  client --> edge
+  edge -->|"/wms*, /wmts/*, /service*"| mapproxy
+  edge -->|"everything else"| tileservergl
+  mapproxy -->|"EPSG:3857 tiles"| tileservergl
+  tileservergl --- mbtiles
+```
+
+### 3. EPSG:4087 dual-TileserverGL with nginx
+
+`./deploy.sh --4087` or `.\deploy.ps1 -Use4087` adds the `docker-compose.4087.yaml` overlay to `docker-compose.yaml`, which adds a second TileserverGL container that serves EPSG:4087 MBTiles from `tileserver/data/4087`, with nginx fronting all of it exactly like deployment 1. MapProxy runs `mapproxy.4087.yaml`, an overlay on `mapproxy.yaml` that builds its EPSG:4326 layers from that container instead of from EPSG:3857 -- a pure unit-scale conversion rather than a resample away from Web Mercator's distortion, so EPSG:4326 output stays sharp away from the equator. The EPSG:3857 and EPSG:3395 layers still come from the original container, and the published layer list is unchanged. See [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](deployment-4087.md).
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+
+  subgraph stack["docker-compose.yaml + docker-compose.4087.yaml + docker-compose.override.yaml"]
+    nginx["nginx<br/>port 8082"]
+    tilecache[("nginx/cache<br/>tile cache")]
+    mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]
+    mbtiles3857[("tileserver/data/3857")]
+    mbtiles4087[("tileserver/data/4087")]
+    shared[("tileserver/fonts<br/>tileserver/styles<br/>tileserver/config")]
+  end
+
+  client -->|"port 8082"| nginx
+  nginx --- tilecache
+  nginx -->|"/mapproxy/* and /"| mapproxy
+  nginx -->|"/tileservergl/*"| tileservergl
+  nginx -->|"/tileservergl4087/*"| tileservergl4087
+  mapproxy -->|"EPSG:3857 and 3395 layers"| tileservergl
+  mapproxy -->|"EPSG:4326 layers"| tileservergl4087
+  tileservergl --- mbtiles3857
+  tileservergl4087 --- mbtiles4087
+  tileservergl --- shared
+  tileservergl4087 --- shared
+```
+
+### 4. EPSG:4087 dual-TileserverGL without nginx
+
+`./deploy.sh --4087 --no-nginx`, `.\deploy.ps1 -Use4087 -NoNginx`, or `docker compose -f docker-compose.yaml -f docker-compose.4087.yaml up -d` combines deployments 2 and 3: the same EPSG:4087-backed EPSG:4326 reprojection as deployment 3, but with nginx skipped (and nothing cached) like deployment 2. All three containers publish their own port directly -- MapProxy (`MAPPROXY_PORT`, default `8081`), the EPSG:3857 TileserverGL (`TILESERVER_PORT`, default `8080`), and the EPSG:4087 TileserverGL (`TILESERVER_4087_PORT`, default `8083`) -- ready to sit behind an ALB/CloudFront the same way deployment 2 does. See [Advanced: Deploying Without nginx](advanced-deployment.md#combining-with-the-epsg4087-deployment).
+
+```mermaid
+flowchart LR
+  client(["Browser / GIS client"])
+  edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
+
+  subgraph stack["docker-compose.yaml + docker-compose.4087.yaml"]
+    mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
+    tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
+    tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]
+    mbtiles3857[("tileserver/data/3857")]
+    mbtiles4087[("tileserver/data/4087")]
+    shared[("tileserver/fonts<br/>tileserver/styles<br/>tileserver/config")]
+  end
+
+  client --> edge
+  edge -->|"/wms*, /wmts/*, /service*"| mapproxy
+  edge -->|"everything else"| tileservergl
+  mapproxy -->|"EPSG:3857 and 3395 layers"| tileservergl
+  mapproxy -->|"EPSG:4326 layers"| tileservergl4087
+  tileservergl --- mbtiles3857
+  tileservergl4087 --- mbtiles4087
+  tileservergl --- shared
+  tileservergl4087 --- shared
+```
+
+### 5. OpenShift/Kubernetes via Helm
+
+[`charts/rbt`](../charts/rbt) deploys the same containers as deployment 4 to a Kubernetes/OpenShift cluster, with the MBTiles, fonts, and styles downloaded from S3 into PVCs instead of bind-mounted. [Advanced: Deploying to OpenShift with Helm](deployment-openshift.md#architecture) has its diagram.
+
+## Tile Caching
+
+MapProxy stores no tiles -- every cache in `mapproxy.yaml` sets `disable_storage`, so MapProxy asks TileserverGL for each tile it serves, and TileserverGL renders it. In the deployments with nginx (1 and 3), [`nginx/config/nginx.conf`](../nginx/config/nginx.conf) caches the results:
+
+- **What's cached**: map images only -- tile and static-map URLs ending in `.png`, `.jpg`, `.jpeg`, or `.webp`, and WMS `GetMap`/`GetLegendGraphic` requests -- when the backend answers `200` with an `image/*` response. Capabilities documents, TileJSON, styles, fonts, and vector tiles always go to the backend, so they reflect the running configuration. WMS requests with `EXCEPTIONS=inimage` or `EXCEPTIONS=blank` aren't cached either, since their errors come back as ordinary `200` images.
+- **For how long**: 30 days, whatever cache headers MapProxy and TileserverGL send, and up to 10 GB on disk in `nginx/cache/` (nginx evicts the least recently used images first). Images nobody requests for 30 days are removed too.
+- **Checking it**: every response through port 8082 has an `X-Cache-Status` header: `MISS` when nginx had to fetch an image from the backend, `HIT` when it served one from the cache, and `BYPASS` for a request it never caches (`EXPIRED`, `STALE`, and `UPDATING` show up around a cached image's 30-day expiry, or while a backend is down). [Verifying Your Installation](verify.md) shows a `MISS` followed by a `HIT`.
+- **Emptying it**: nginx can't tell when the MBTiles or styles behind a cached image change. `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`) empties the cache and restarts TileserverGL; the deploy scripts do this automatically when their download step fetched new MBTiles. Run it yourself after replacing MBTiles or editing a style by hand.
+
+Without nginx (deployments 2 and 4) and on the Helm chart, nothing is cached and TileserverGL renders every request. For heavy traffic there, put a CDN or caching reverse proxy in front of MapProxy -- `nginx.conf` shows the policy this stack uses.
 
 ## Component Reference
 
