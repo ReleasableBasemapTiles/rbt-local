@@ -13,6 +13,14 @@
 # in .env (see .env.example) so plain `docker compose ...` picks the files.
 # Going back to the default stack leaves tileservergl4087 running as an
 # orphan, so switch with `docker compose down --remove-orphans` first.
+
+# Log rotation, as in docker-compose.yaml (YAML anchors don't cross files).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mapproxy:
     environment:
@@ -41,6 +49,7 @@ services:
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped
+    logging: *logging
     shm_size: ${TILESERVER_SHM_SIZE:-2gb}
     networks:
       - rbt-network

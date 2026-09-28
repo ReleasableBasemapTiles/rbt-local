@@ -1,3 +1,13 @@
+# Docker's default json-file log driver never rotates, and nginx and
+# TileserverGL log every request, so each container keeps 3 x 10 MB. YAML
+# anchors don't cross files: docker-compose.override.yaml and
+# docker-compose.4087.yaml repeat this block.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mapproxy:
     # Built locally from Dockerfile.mapproxy: Python 3.14 + conda-forge
@@ -30,6 +40,7 @@ services:
         condition: service_healthy
     shm_size: ${MAPPROXY_SHM_SIZE:-2gb}
     restart: unless-stopped
+    logging: *logging
     networks:
       - rbt-network
     healthcheck:
@@ -55,6 +66,7 @@ services:
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped
+    logging: *logging
     shm_size: ${TILESERVER_SHM_SIZE:-2gb}
     networks:
       - rbt-network

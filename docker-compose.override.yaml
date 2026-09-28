@@ -10,6 +10,14 @@
 #   docker compose -f docker-compose.yaml up -d
 #
 # See README.md for the ALB/CloudFront routing this replaces.
+
+# Log rotation, as in docker-compose.yaml (YAML anchors don't cross files).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   nginx:
     # Pinned to the stable branch; plain "alpine" tracks nginx mainline.
@@ -29,6 +37,7 @@ services:
         condition: service_healthy
     shm_size: ${NGINX_SHM_SIZE:-1gb}
     restart: unless-stopped
+    logging: *logging
     networks:
       - rbt-network
     healthcheck:
