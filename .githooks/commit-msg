@@ -5,7 +5,9 @@
 subject=$(head -n1 "$1")
 
 case "$subject" in
-  Merge\ *|Revert\ *)
+  # git commit --fixup/--squash subjects; commitlint skips them too, and a
+  # squash merge or autosquash rebase removes them
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *)
     exit 0
     ;;
 esac
