@@ -29,7 +29,7 @@ EPSG:4087 shares EPSG:4326's linear scaling: one degree of latitude or longitude
 .\deploy.ps1 -Use4087
 ```
 
-Set `S3_BUCKET_RBT_4087` and `S3_BUCKET_TERRAIN_4087` (alongside the existing `S3_BUCKET_RBT`/`S3_BUCKET_TERRAIN`) in `.env` first -- see [.env.example](../.env.example). `--4087`/`-Use4087` combine freely with `--no-nginx`/`-NoNginx` and `--force`/`-Force`.
+This downloads the EPSG:4087 `RBT.mbtiles`/`TERRAIN.mbtiles` into `tileserver/data/4087/` (alongside the EPSG:3857 pair in `tileserver/data/3857/`) from the same public mirror as the default deployment, with no credentials needed. To use your own bucket instead, set `S3_BUCKET_RBT_4087` and `S3_BUCKET_TERRAIN_4087` in `.env` -- see [.env.example](../.env.example) and the main README's [Using your own S3 bucket](../README.md#using-your-own-s3-bucket). `--4087`/`-Use4087` combine freely with `--no-nginx`/`-NoNginx` and `--force`/`-Force`.
 
 **With Docker Compose directly** (assuming the EPSG:3857 MBTiles are already in `tileserver/data/3857/` and the EPSG:4087 MBTiles are already in `tileserver/data/4087/`):
 

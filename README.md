@@ -8,7 +8,7 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 
 | You want to... | Do this | Guide |
 | --- | --- | --- |
-| Run RBT on one machine, the quick way | Get [S3 credentials](#get-s3-credentials), then run `./deploy.sh` (macOS/Linux) or `.\deploy.ps1` (Windows) | [Quickstart](#quickstart) |
+| Run RBT on one machine, the quick way | Run `./deploy.sh` (macOS/Linux) or `.\deploy.ps1` (Windows) -- it downloads the [map data](#get-the-map-data) for you | [Quickstart](#quickstart) |
 | Run each setup step yourself | Follow the manual guide for your OS | [macOS](docs/install-macos.md), [Linux](docs/install-linux.md), [Windows 11](docs/install-windows.md) |
 | Put an AWS ALB or CloudFront in front, instead of the local nginx | Add `--no-nginx` (or `-NoNginx`) | [Deploying Without nginx](docs/advanced-deployment.md) |
 | Get sharper EPSG:4326 maps | Add `--4087` (or `-Use4087`) | [The EPSG:4087 Deployment](docs/deployment-4087.md) |
@@ -21,32 +21,45 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 - An Intel/AMD or Arm64 machine (including Apple Silicon): the `maptiler/tileserver-gl` and `nginx` images publish `linux/amd64` and `linux/arm64` builds, and Docker builds the MapProxy image on your machine from [`Dockerfile.mapproxy`](Dockerfile.mapproxy)
 - Internet connection, for downloading components and the MBTiles data
 - Minimum 16GB of RAM and 8 cores CPU recommended
-- Disk space: enough for the two MBTiles files described below (four with the EPSG:4087 deployment), **plus** up to 10 GB for nginx's tile cache and room for the MapProxy image. Ask the RBT team for current file sizes when you receive your S3 credentials -- the datasets are updated periodically, so we don't pin numbers here that would go stale
+- Disk space: enough for the two MBTiles files described below (four with the EPSG:4087 deployment), **plus** up to 10 GB for nginx's tile cache and room for the MapProxy image. The datasets are updated periodically, so we don't pin sizes here that would go stale -- the `aws s3 ls` command under [Get the Map Data](#get-the-map-data) lists the current ones
 
-## Get S3 Credentials
+## Get the Map Data
 
-Before starting, you need special access to download the map data:
+RBT serves two files -- `RBT.mbtiles` and `TERRAIN.mbtiles` -- which `tileserver/config/config.json` references by these exact names. The deploy scripts download both into `tileserver/data/3857/` for you (and, with `--4087`/`-Use4087`, the [EPSG:4087 deployment](docs/deployment-4087.md)'s own pair into `tileserver/data/4087/`) from a public, read-only mirror, so **no credentials are needed**. The mirror is an S3-compatible endpoint that the AWS CLI reads anonymously; to see the current files and their sizes:
 
-1. Email [Tom Boggess](mailto:Thomas.J.Boggess@usace.army.mil) to request S3 credentials
-2. Wait for approval and credentials (this may take a few days -- a good first step while you read the rest of this guide)
-3. Once you receive credentials, configure AWS CLI by running:
+```bash
+aws s3 ls s3://mbtiles/ --recursive --human-readable --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
+```
+
+### Downloading the map data by hand
+
+The deploy scripts download the data for you. If you're following one of the manual install guides instead, run these from the `rbt-local` directory:
+
+```bash
+# EPSG:3857 -- every deployment
+aws s3 cp s3://mbtiles/3857/RBT.mbtiles tileserver/data/3857/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
+aws s3 cp s3://mbtiles/3857/TERRAIN.mbtiles tileserver/data/3857/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
+
+# EPSG:4087 -- only for the EPSG:4087 deployment
+aws s3 cp s3://mbtiles/4087/RBT.mbtiles tileserver/data/4087/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
+aws s3 cp s3://mbtiles/4087/TERRAIN.mbtiles tileserver/data/4087/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
+```
+
+TileserverGL reads MBTiles only at startup, so after replacing them on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` on that deployment): it restarts TileserverGL and empties nginx's tile cache.
+
+### Using your own S3 bucket
+
+To download from your own S3 bucket instead of the public mirror (the [Helm chart](charts/rbt) always does):
+
+1. Email [Tom Boggess](mailto:Thomas.J.Boggess@usace.army.mil) to request S3 credentials, and wait for approval (this may take a few days)
+2. Configure AWS CLI by running:
    ```bash
    aws configure --profile rbt
    ```
    Enter the provided Access Key ID, Secret Access Key, and set the region to `us-east-1`
+3. In `.env` (copied from [`.env.example`](.env.example)), set `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` (plus `S3_BUCKET_RBT_4087`/`S3_BUCKET_TERRAIN_4087` for `--4087`) to the bucket paths the RBT team gave you, and uncomment `AWS_PROFILE=rbt`. Any file whose variable you leave unset still comes from the public mirror.
 
-You'll use these credentials to download two files -- `RBT.mbtiles` and `TERRAIN.mbtiles` -- which `tileserver/config/config.json` references by these exact names. The Quickstart below downloads both automatically once your credentials and bucket paths are in place.
-
-### Downloading the map data by hand
-
-The deploy scripts download the data for you. If you're following one of the manual install guides instead, copy both files into `tileserver/data/3857/`, from the `rbt-local` directory, using the bucket paths the RBT team gave you (`aws s3 ls s3://<bucket-path>/ --profile rbt` lists what's there):
-
-```bash
-aws s3 cp s3://<rbt-bucket-path>/RBT.mbtiles tileserver/data/3857/ --profile rbt
-aws s3 cp s3://<terrain-bucket-path>/TERRAIN.mbtiles tileserver/data/3857/ --profile rbt
-```
-
-The [EPSG:4087 deployment](docs/deployment-4087.md) also needs its own `RBT.mbtiles` and `TERRAIN.mbtiles` in `tileserver/data/4087/`. TileserverGL reads MBTiles only at startup, so after replacing them on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` on that deployment): it restarts TileserverGL and empties nginx's tile cache.
+By hand, that's `aws s3 cp s3://<bucket-path>/RBT.mbtiles tileserver/data/3857/ --profile rbt` (and the same for `TERRAIN.mbtiles`); `aws s3 ls s3://<bucket-path>/ --profile rbt` lists what's there.
 
 ## Quickstart
 
@@ -57,7 +70,7 @@ The [EPSG:4087 deployment](docs/deployment-4087.md) also needs its own `RBT.mbti
    cd rbt-local
    ```
 
-2. **Copy `.env.example` to `.env`**, fill in `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` with the bucket paths the RBT team gave you alongside your credentials, and uncomment `AWS_PROFILE=rbt` so the download uses the profile you configured above.
+2. **Optionally, copy `.env.example` to `.env`** to change ports, bind address, or other settings. You don't need it for the map data: the deploy scripts download that from the public mirror (see [Get the Map Data](#get-the-map-data), including how to use your own S3 bucket instead).
 
 3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data, and starts RBT -- no other manual steps required.
 

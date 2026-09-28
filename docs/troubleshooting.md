@@ -30,7 +30,8 @@ This means you need administrator privileges.
 
 ## "Cannot connect to AWS" Error
 
-- **Solution**: Make sure you've configured AWS CLI with `aws configure --profile rbt`, and that the download uses that profile: set `AWS_PROFILE=rbt` in `.env` for the deploy scripts (see [.env.example](../.env.example)), or add `--profile rbt` to `aws s3` commands you run yourself. `aws s3 ls s3://<bucket-path>/ --profile rbt` checks the credentials and the bucket path together.
+- **Downloading from the public mirror (the default)**: No credentials are involved, so this is a network problem. Check that this host can reach the mirror -- the `aws s3 ls ... --no-sign-request ...` command under the main README's [Get the Map Data](../README.md#get-the-map-data) tests it directly. If it fails with an SSL certificate error, your network re-signs HTTPS traffic with its own certificate authority: point `AWS_CA_BUNDLE` at that CA's PEM file (in `.env`, or exported) and re-run.
+- **Downloading from your own bucket (`S3_BUCKET_*` set)**: Make sure you've configured AWS CLI with `aws configure --profile rbt`, and that the download uses that profile: set `AWS_PROFILE=rbt` in `.env` for the deploy scripts (see [.env.example](../.env.example)), or add `--profile rbt` to `aws s3` commands you run yourself. `aws s3 ls s3://<bucket-path>/ --profile rbt` checks the credentials and the bucket path together.
 
 ## Every `/mapproxy/*` Request Returns a 502 Bad Gateway
 

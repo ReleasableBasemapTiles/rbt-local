@@ -121,7 +121,7 @@ tileservers:
       sizeLimit: 2Gi
     persistence:
       # Ask the RBT team for current RBT.mbtiles/TERRAIN.mbtiles sizes (see
-      # the main README's "Get S3 Credentials" section) and size this
+      # the main README's "Get the Map Data" section) and size this
       # accordingly -- the datasets are updated periodically, so this
       # default is a starting point, not a measured figure.
       size: 200Gi
