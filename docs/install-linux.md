@@ -92,7 +92,10 @@ git clone https://github.com/ReleasableBasemapTiles/rbt-local.git && \
 # (./deploy.sh runs these same steps.)
 mkdir -p mapproxy/data
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
+# Directories 775, files 664. An older version of this step made the .txt
+# files in mapproxy/locks and mapproxy/tile_locks executable, which git
+# reports as a change -- a-x (remove execute) undoes that.
+sudo chmod -R a-x,ug+rwX,o+rX mapproxy/data mapproxy/locks mapproxy/tile_locks
 sudo chmod 775 nginx/cache
 
 # Download the map data into tileserver/data/3857/ (add --4087 for the
