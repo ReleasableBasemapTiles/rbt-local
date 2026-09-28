@@ -188,7 +188,7 @@ Over WMTS, each layer is offered in one TileMatrixSet -- `webmercator` for the `
 ## Troubleshooting GIS Client Connections
 
 1. **Connection Failed**: Ensure Docker containers are running (`docker ps`), and check that your firewall allows connections on port 8082 (or 8080/8081 if bypassing nginx)
-2. **No Layers Visible**: Check that you've downloaded the map data (see the main README's [Get S3 Credentials](../README.md#get-s3-credentials)) and check Docker logs: `docker compose logs`
+2. **No Layers Visible**: Check that you've downloaded the map data (see the main README's [Get the Map Data](../README.md#get-the-map-data)) and check Docker logs: `docker compose logs`
 3. **Slow Performance**: Connect through nginx (port 8082), which caches the map images it serves. The first request for each tile is always slower, while TileserverGL renders it
 4. **Style Issues**: Vector tiles require GIS client support for MapLibre styles
 5. **Projection Issues**: TileserverGL serves EPSG:3857 (Web Mercator) only, so set your QGIS/ArcGIS project CRS to EPSG:3857 when connecting to it (or let the client reproject on the fly). MapProxy is the one to use if you need another projection -- see [Available Layers in MapProxy](#available-layers-in-mapproxy) above for the EPSG:3395 and EPSG:4326 layers and the full list of SRS its WMS accepts

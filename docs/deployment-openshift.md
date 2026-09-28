@@ -35,7 +35,7 @@ Both TileserverGL Deployments also run a `fetch-s3` init container (downloading 
 ## Prerequisites
 
 - `helm` 3.x and `oc` (or `kubectl`), authenticated against your cluster and project/namespace
-- The same S3 access this repo's other deployments need -- see the main README's [Get S3 Credentials](../README.md#get-s3-credentials) -- plus `s3://` prefixes for `tileserver/fonts` and `tileserver/styles` (`aws s3 sync tileserver/fonts s3://my-bucket/fonts`, same for `styles`), or pre-populated PVCs if you'd rather skip the in-cluster download (see [charts/rbt/README.md](../charts/rbt/README.md))
+- S3 credentials and bucket paths for the MBTiles -- unlike the deploy scripts, which default to an anonymous public mirror, the chart's init containers always authenticate; see the main README's [Using your own S3 bucket](../README.md#using-your-own-s3-bucket) -- plus `s3://` prefixes for `tileserver/fonts` and `tileserver/styles` (`aws s3 sync tileserver/fonts s3://my-bucket/fonts`, same for `styles`), or pre-populated PVCs if you'd rather skip the in-cluster download (see [charts/rbt/README.md](../charts/rbt/README.md))
 
 ## Deploying
 

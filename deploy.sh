@@ -5,7 +5,7 @@
 # docs/install-linux.md for the manual equivalent of each step, or run with
 # --help.
 #
-#   S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
+#   ./deploy.sh
 
 set -euo pipefail
 
@@ -19,6 +19,14 @@ TERRAIN_FILE_3857="$DATA_DIR_3857/TERRAIN.mbtiles"
 DATA_DIR_4087="$DATA_DIR/4087"
 RBT_FILE_4087="$DATA_DIR_4087/RBT.mbtiles"
 TERRAIN_FILE_4087="$DATA_DIR_4087/TERRAIN.mbtiles"
+
+# Public, read-only mirror of the MBTiles on an S3-compatible (RustFS)
+# endpoint. Used for every file whose S3_BUCKET_* variable is unset, with
+# anonymous (unsigned) requests, so no AWS credentials are needed.
+PUBLIC_S3_ENDPOINT="https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net"
+PUBLIC_S3_REGION="us-east-1"
+PUBLIC_S3_PREFIX_3857="s3://mbtiles/3857"
+PUBLIC_S3_PREFIX_4087="s3://mbtiles/4087"
 
 FORCE_DOWNLOAD=0
 WITH_NGINX=1
@@ -65,9 +73,11 @@ regardless of the order given on the command line):
               macOS; Docker Engine + Compose plugin on Linux), and git.
               Uses Homebrew on macOS, apt on Ubuntu/Debian, or dnf on
               Fedora/RHEL, whichever this host's /etc/os-release identifies.
-  --download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
-              tileserver/data/3857/. Whenever this actually fetches a file,
-              --refresh runs too.
+  --download  Download RBT.mbtiles/TERRAIN.mbtiles into
+              tileserver/data/3857/ -- from the public RBT mirror (no AWS
+              credentials needed) unless S3_BUCKET_RBT/S3_BUCKET_TERRAIN
+              point at your own bucket (see below). Whenever this actually
+              fetches a file, --refresh runs too.
   --perm      Fix mapproxy/nginx runtime directory permissions (a no-op on
               macOS -- see below).
   --refresh   Make the stack serve the current data: recreate any running
@@ -97,7 +107,7 @@ regardless of the order given on the command line):
               TERRAIN.mbtiles into tileserver/data/4087/.
 
 Usage:
-  S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
+  ./deploy.sh                       # full run, data from the public mirror
   ./deploy.sh --init                # just install prerequisites
   ./deploy.sh --download --perm     # just refresh data + permissions
   ./deploy.sh --refresh             # reload styles/MBTiles, purge cache
@@ -113,25 +123,28 @@ escalates internally with sudo only for the specific steps that need root
 drops your shell's variables, put Compose settings such as NGINX_PORT in
 .env rather than exporting them. On macOS nothing here uses
 sudo -- Homebrew and Docker Desktop both install and run as your normal
-user. Either way, running it unprivileged means `aws s3 cp` uses your own
-AWS credential chain (env vars, ~/.aws/credentials, AWS_PROFILE, or an
-EC2/ECS instance role) exactly as it would outside this script -- nothing
-here configures AWS credentials for you.
+user.
 
-Required environment variables (only enforced when the download step runs;
-a value already set in the environment takes precedence over the same key
-in .env):
+Where the data comes from: by default, each MBTiles file is downloaded
+anonymously from the public RBT mirror (an S3-compatible endpoint, see
+PUBLIC_S3_* at the top of this script) -- no AWS credentials or .env
+needed. Setting a file's S3_BUCKET_* variable below downloads that file
+from your own bucket instead, and those downloads run unprivileged with
+your own AWS credential chain (env vars, ~/.aws/credentials, AWS_PROFILE,
+or an EC2/ECS instance role) exactly as `aws s3 cp` would outside this
+script -- nothing here configures AWS credentials for you.
+
+Optional environment variables (each overrides the public mirror for one
+file; a value already set in the environment takes precedence over the
+same key in .env):
   S3_BUCKET_RBT      Bucket (optionally with a prefix), no filename, e.g.
                       "my-bucket" or "s3://my-bucket/exports". Must contain
                       RBT.mbtiles.
   S3_BUCKET_TERRAIN  Same, but must contain TERRAIN.mbtiles.
-
-Additional environment variables (only enforced when the download step
-runs together with --4087):
   S3_BUCKET_RBT_4087      Same as S3_BUCKET_RBT, but for the EPSG:4087
-                           RBT.mbtiles.
+                           RBT.mbtiles (only used with --4087).
   S3_BUCKET_TERRAIN_4087  Same as S3_BUCKET_TERRAIN, but for the EPSG:4087
-                           TERRAIN.mbtiles.
+                           TERRAIN.mbtiles (only used with --4087).
 
 Re-running this script is safe: package installs are skipped when already
 present. TERRAIN.mbtiles is only downloaded once (it never changes upstream).
@@ -489,6 +502,23 @@ s3_object_key() {
   esac
 }
 
+# Runs `aws "$@"` against the public mirror (anonymous, on its own endpoint)
+# when $1 is 1, else with your own AWS config and credential chain. The
+# mirror's settings go on the command line so they beat any AWS_ENDPOINT_URL
+# or region in the environment, and so an older AWS CLI that ignores
+# AWS_ENDPOINT_URL can't send s3://mbtiles to a same-named AWS bucket. A
+# function rather than a flags array for the same bash < 4.4 reason as
+# as_root.
+s3_aws() {
+  local public="$1"
+  shift
+  if [[ "$public" -eq 1 ]]; then
+    aws --no-sign-request --endpoint-url "$PUBLIC_S3_ENDPOINT" --region "$PUBLIC_S3_REGION" "$@"
+  else
+    aws "$@"
+  fi
+}
+
 # Portable stat/date helpers -- GNU coreutils (Linux) and BSD (macOS) accept
 # different flags for both. `file_mtime_epoch`/`format_epoch` cover the
 # stat/date-formatting direction; `parse_iso8601_epoch` covers parsing S3's
@@ -529,10 +559,11 @@ parse_iso8601_epoch() {
 
 # Prints the epoch seconds of an S3 object's LastModified time on stdout, or
 # nothing (with a non-zero exit) if it can't be read -- e.g. missing object,
-# or an IAM policy that allows GetObject but not this HeadObject call.
+# or an IAM policy that allows GetObject but not this HeadObject call. $1 is
+# s3_aws's public flag.
 remote_mtime_epoch() {
-  local remote_uri="$1" last_modified
-  last_modified="$(aws s3api head-object \
+  local public="$1" remote_uri="$2" last_modified
+  last_modified="$(s3_aws "$public" s3api head-object \
     --bucket "$(s3_bucket_name "$remote_uri")" \
     --key "$(s3_object_key "$remote_uri")" \
     --query 'LastModified' --output text 2>/dev/null)" || return 1
@@ -544,13 +575,23 @@ remote_mtime_epoch() {
 # than the local file's mtime (used for RBT.mbtiles, which is updated
 # periodically). check_remote=0 just downloads once and leaves the local
 # file alone afterwards (used for TERRAIN.mbtiles, which never changes).
-# --force always re-downloads regardless of check_remote.
+# --force always re-downloads regardless of check_remote. public_prefix is
+# the public mirror's s3:// prefix for this file, used when bucket_var is
+# unset.
 fetch_mbtiles() {
-  local bucket_var="$1" dest="$2" check_remote="$3"
-  local filename prefix remote_uri need_download
+  local bucket_var="$1" dest="$2" check_remote="$3" public_prefix="$4"
+  local filename prefix remote_uri need_download public source
 
   filename="$(basename "$dest")"
-  prefix="$(normalize_s3_uri "${!bucket_var}")"
+  if [[ -n "${!bucket_var:-}" ]]; then
+    prefix="$(normalize_s3_uri "${!bucket_var}")"
+    public=0
+    source="$bucket_var"
+  else
+    prefix="$public_prefix"
+    public=1
+    source="the public mirror at $PUBLIC_S3_ENDPOINT"
+  fi
   remote_uri="$prefix/$filename"
   need_download=1
 
@@ -563,7 +604,7 @@ fetch_mbtiles() {
     need_download=0
   else
     local remote_epoch local_epoch
-    if remote_epoch="$(remote_mtime_epoch "$remote_uri")"; then
+    if remote_epoch="$(remote_mtime_epoch "$public" "$remote_uri")"; then
       local_epoch="$(file_mtime_epoch "$dest")"
       if [[ "$remote_epoch" -gt "$local_epoch" ]]; then
         log "$filename in S3 was modified $(format_epoch "$remote_epoch") (newer than the local copy); re-downloading"
@@ -580,16 +621,16 @@ fetch_mbtiles() {
 
   [[ "$need_download" -eq 1 ]] || return 0
 
-  log "Downloading $filename from $remote_uri"
-  aws s3 cp "$remote_uri" "$dest"
+  log "Downloading $filename from $remote_uri ($source)"
+  s3_aws "$public" s3 cp "$remote_uri" "$dest"
   DATA_UPDATED=1
 }
 
 download_mbtiles() {
   mkdir -p "$DATA_DIR_3857"
 
-  fetch_mbtiles S3_BUCKET_RBT "$RBT_FILE_3857" 1
-  fetch_mbtiles S3_BUCKET_TERRAIN "$TERRAIN_FILE_3857" 0
+  fetch_mbtiles S3_BUCKET_RBT "$RBT_FILE_3857" 1 "$PUBLIC_S3_PREFIX_3857"
+  fetch_mbtiles S3_BUCKET_TERRAIN "$TERRAIN_FILE_3857" 0 "$PUBLIC_S3_PREFIX_3857"
 
   [[ -s "$RBT_FILE_3857" ]] || die "$RBT_FILE_3857 is missing or empty after download"
   [[ -s "$TERRAIN_FILE_3857" ]] || die "$TERRAIN_FILE_3857 is missing or empty after download"
@@ -600,8 +641,8 @@ download_mbtiles() {
   if [[ "$USE_4087" -eq 1 ]]; then
     mkdir -p "$DATA_DIR_4087"
 
-    fetch_mbtiles S3_BUCKET_RBT_4087 "$RBT_FILE_4087" 1
-    fetch_mbtiles S3_BUCKET_TERRAIN_4087 "$TERRAIN_FILE_4087" 0
+    fetch_mbtiles S3_BUCKET_RBT_4087 "$RBT_FILE_4087" 1 "$PUBLIC_S3_PREFIX_4087"
+    fetch_mbtiles S3_BUCKET_TERRAIN_4087 "$TERRAIN_FILE_4087" 0 "$PUBLIC_S3_PREFIX_4087"
 
     [[ -s "$RBT_FILE_4087" ]] || die "$RBT_FILE_4087 is missing or empty after download"
     [[ -s "$TERRAIN_FILE_4087" ]] || die "$TERRAIN_FILE_4087 is missing or empty after download"
@@ -843,15 +884,6 @@ for name in "${COMPOSE_FILE_NAMES[@]}"; do
     die "$name not found next to this script -- run it from inside the rbt-local repo checkout."
   COMPOSE_FILES+=(-f "$SCRIPT_DIR/$name")
 done
-
-if [[ "$RUN_DOWNLOAD" -eq 1 ]]; then
-  : "${S3_BUCKET_RBT:?Set S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. S3_BUCKET_RBT=my-bucket -- or add it to .env (see .env.example)}"
-  : "${S3_BUCKET_TERRAIN:?Set S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles -- or add it to .env (see .env.example)}"
-  if [[ "$USE_4087" -eq 1 ]]; then
-    : "${S3_BUCKET_RBT_4087:?Set S3_BUCKET_RBT_4087 to the bucket (and optional prefix) containing the EPSG:4087 RBT.mbtiles -- or add it to .env (see .env.example)}"
-    : "${S3_BUCKET_TERRAIN_4087:?Set S3_BUCKET_TERRAIN_4087 to the bucket (and optional prefix) containing the EPSG:4087 TERRAIN.mbtiles -- or add it to .env (see .env.example)}"
-  fi
-fi
 
 if [[ "$RUN_INIT" -eq 1 ]]; then
   install_prereqs

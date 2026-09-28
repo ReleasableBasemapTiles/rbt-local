@@ -68,7 +68,7 @@ RBT is deployed as a containerized application using [TileserverGL](https://gith
 
 An alternative deployment ([docs/deployment-4087.md](deployment-4087.md)) adds a second TileserverGL container serving **EPSG:4087** (World Equidistant Cylindrical) MBTiles, and reprojects the EPSG:4326 layers from those EPSG:4087 tiles instead of EPSG:3857 -- a pure unit-scale conversion rather than a resample away from EPSG:3857's angular distortion, so EPSG:4326 output is sharper away from the equator.
 
-This guide documents a **Docker Compose** deployment suitable for a single host (a workstation, VM, or on-premises server) running macOS, Windows 11, or Linux. You will need S3 credentials from the RBT team to download the MBTiles data that TileserverGL serves.
+This guide documents a **Docker Compose** deployment suitable for a single host (a workstation, VM, or on-premises server) running macOS, Windows 11, or Linux. The deploy scripts download the MBTiles data that TileserverGL serves from a public mirror, with no credentials needed (see the main README's [Get the Map Data](../README.md#get-the-map-data)).
 
 ## Deployment Variants
 

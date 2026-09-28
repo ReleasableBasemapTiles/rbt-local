@@ -5,7 +5,7 @@
 # See docs/install-windows.md for the manual equivalent of each step, or run
 # with -Help.
 #
-#   $env:S3_BUCKET_RBT = 'my-bucket'; $env:S3_BUCKET_TERRAIN = 'my-other-bucket'; .\deploy.ps1
+#   .\deploy.ps1
 #
 # Mirrors deploy.sh's steps and flags for macOS/Linux/WSL2 hosts; see that
 # script (and this repo's README "Quickstart" section) for the Bash
@@ -44,9 +44,11 @@ of the order given on the command line):
              platform (enabled with no Linux distribution -- Docker
              Desktop's own internal VM is all that needs it), and Docker
              Desktop (WSL2 engine).
-  -Download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
-             tileserver\data\3857\. Whenever this actually fetches a file,
-             -Refresh runs too.
+  -Download  Download RBT.mbtiles/TERRAIN.mbtiles into
+             tileserver\data\3857\ -- from the public RBT mirror (no AWS
+             credentials needed) unless S3_BUCKET_RBT/S3_BUCKET_TERRAIN
+             point at your own bucket (see below). Whenever this actually
+             fetches a file, -Refresh runs too.
   -Prep      Create the mapproxy/nginx/tileserver runtime directories and
              normalize their config files to LF line endings (uWSGI refuses
              to start if uwsgi.ini has Windows CRLF endings).
@@ -76,9 +78,7 @@ of the order given on the command line):
              TERRAIN.mbtiles into tileserver\data\4087\.
 
 Usage:
-  $env:S3_BUCKET_RBT = 'my-bucket'
-  $env:S3_BUCKET_TERRAIN = 'my-other-bucket'
-  .\deploy.ps1
+  .\deploy.ps1                        # full run, data from the public mirror
   .\deploy.ps1 -Init                  # just install prerequisites
   .\deploy.ps1 -Download -Prep        # just refresh data + runtime dirs
   .\deploy.ps1 -Refresh               # reload styles/MBTiles, purge cache
@@ -91,26 +91,29 @@ Usage:
 Run this from an elevated (Administrator) PowerShell only when using -Init
 (or with no step switches, since -Init then runs too) -- installing software
 and enabling the WSL2 platform both need it. -Download, -Prep, -Refresh, and
--Deploy do not need elevation. Unlike Linux `sudo`, Windows elevation keeps
-your normal user profile active, so `aws s3 cp` still uses your own AWS
-credential chain (%USERPROFILE%\.aws\credentials, environment variables, or
-AWS_PROFILE) exactly as it would in a non-elevated shell -- nothing here
-configures AWS credentials for you.
+-Deploy do not need elevation.
 
-Required environment variables (only enforced when the download step runs;
-a value already set in the environment takes precedence over the same key
-in .env):
+Where the data comes from: by default, each MBTiles file is downloaded
+anonymously from the public RBT mirror (an S3-compatible endpoint, see
+$script:PublicS3* in this script) -- no AWS credentials or .env needed.
+Setting a file's S3_BUCKET_* variable below downloads that file from your
+own bucket instead. Unlike Linux `sudo`, Windows elevation keeps your
+normal user profile active, so those downloads still use your own AWS
+credential chain (%USERPROFILE%\.aws\credentials, environment variables,
+or AWS_PROFILE) exactly as `aws s3 cp` would in a non-elevated shell --
+nothing here configures AWS credentials for you.
+
+Optional environment variables (each overrides the public mirror for one
+file; a value already set in the environment takes precedence over the
+same key in .env):
   S3_BUCKET_RBT      Bucket (optionally with a prefix), no filename, e.g.
                       "my-bucket" or "s3://my-bucket/exports". Must contain
                       RBT.mbtiles.
   S3_BUCKET_TERRAIN  Same, but must contain TERRAIN.mbtiles.
-
-Additional environment variables (only enforced when the download step
-runs together with -Use4087):
   S3_BUCKET_RBT_4087      Same as S3_BUCKET_RBT, but for the EPSG:4087
-                           RBT.mbtiles.
+                           RBT.mbtiles (only used with -Use4087).
   S3_BUCKET_TERRAIN_4087  Same as S3_BUCKET_TERRAIN, but for the EPSG:4087
-                           TERRAIN.mbtiles.
+                           TERRAIN.mbtiles (only used with -Use4087).
 
 Re-running this script is safe: package installs are skipped when already
 present. TERRAIN.mbtiles is only downloaded once (it never changes upstream).
@@ -452,17 +455,32 @@ function Get-S3ObjectKey {
     return ''
 }
 
+# The global `aws` flags for one download: the public mirror's (anonymous,
+# on its own endpoint) when $Public, else none, so your own AWS config and
+# credential chain apply. On the command line so they beat any
+# AWS_ENDPOINT_URL or region in the environment, and so an older AWS CLI
+# that ignores AWS_ENDPOINT_URL can't send s3://mbtiles to a same-named AWS
+# bucket. Splatted (aws @flags ...), where an empty array adds nothing.
+function Get-S3SourceArgs {
+    param([bool]$Public)
+    if ($Public) {
+        return @('--no-sign-request', '--endpoint-url', $script:PublicS3Endpoint, '--region', $script:PublicS3Region)
+    }
+    return @()
+}
+
 # Returns the S3 object's LastModified time (UTC) as a [datetime], or $null
 # if it can't be read -- e.g. missing object, or an IAM policy that allows
-# GetObject but not this HeadObject call.
+# GetObject but not this HeadObject call. $AwsArgs comes from
+# Get-S3SourceArgs.
 function Get-RemoteMTimeUtc {
-    param([string]$RemoteUri)
+    param([string]$RemoteUri, [string[]]$AwsArgs)
     # A failed head-object prints to stderr, which 2>$null would make fatal
     # under 'Stop' on Windows PowerShell 5.1 -- see Test-DockerEngineRunning.
     $ErrorActionPreference = 'Continue'
     $bucket = Get-S3BucketName $RemoteUri
     $key = Get-S3ObjectKey $RemoteUri
-    $lastModified = aws s3api head-object --bucket $bucket --key $key --query 'LastModified' --output text 2>$null
+    $lastModified = aws @AwsArgs s3api head-object --bucket $bucket --key $key --query 'LastModified' --output text 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($lastModified) -or $lastModified -eq 'None') {
         return $null
     }
@@ -477,17 +495,28 @@ function Get-RemoteMTimeUtc {
 # newer than the local file's mtime (used for RBT.mbtiles, which is updated
 # periodically). CheckRemote=$false just downloads once and leaves the local
 # file alone afterwards (used for TERRAIN.mbtiles, which never changes).
-# -Force always re-downloads regardless of CheckRemote.
+# -Force always re-downloads regardless of CheckRemote. PublicPrefix is the
+# public mirror's s3:// prefix for this file, used when BucketEnvVarName is
+# unset.
 function Get-MbtilesFile {
     param(
         [string]$BucketEnvVarName,
         [string]$Dest,
-        [bool]$CheckRemote
+        [bool]$CheckRemote,
+        [string]$PublicPrefix
     )
 
     $filename = Split-Path -Leaf $Dest
     $bucketValue = [System.Environment]::GetEnvironmentVariable($BucketEnvVarName)
-    $prefix = ConvertTo-S3Uri $bucketValue
+    if (-not [string]::IsNullOrWhiteSpace($bucketValue)) {
+        $prefix = ConvertTo-S3Uri $bucketValue
+        $awsArgs = Get-S3SourceArgs -Public $false
+        $source = $BucketEnvVarName
+    } else {
+        $prefix = $PublicPrefix
+        $awsArgs = Get-S3SourceArgs -Public $true
+        $source = "the public mirror at $($script:PublicS3Endpoint)"
+    }
     $remoteUri = "$prefix/$filename"
     $destExists = (Test-Path $Dest -PathType Leaf) -and ((Get-Item $Dest).Length -gt 0)
     $needDownload = $true
@@ -500,7 +529,7 @@ function Get-MbtilesFile {
         Write-DeployLog "$filename already present at $Dest; skipping (use -Force to re-download)"
         $needDownload = $false
     } else {
-        $remoteMTime = Get-RemoteMTimeUtc $remoteUri
+        $remoteMTime = Get-RemoteMTimeUtc -RemoteUri $remoteUri -AwsArgs $awsArgs
         if ($null -ne $remoteMTime) {
             $localMTime = (Get-Item $Dest).LastWriteTimeUtc
             if ($remoteMTime -gt $localMTime) {
@@ -520,8 +549,8 @@ function Get-MbtilesFile {
         return
     }
 
-    Write-DeployLog "Downloading $filename from $remoteUri"
-    aws s3 cp $remoteUri $Dest
+    Write-DeployLog "Downloading $filename from $remoteUri ($source)"
+    aws @awsArgs s3 cp $remoteUri $Dest
     if ($LASTEXITCODE -ne 0) {
         Write-ErrorAndExit "aws s3 cp $remoteUri failed (exit $LASTEXITCODE)"
     }
@@ -531,8 +560,8 @@ function Get-MbtilesFile {
 function Get-AllMbtiles {
     New-Item -ItemType Directory -Force -Path $script:DataDir3857 | Out-Null
 
-    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT' -Dest $script:RbtFile3857 -CheckRemote $true
-    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN' -Dest $script:TerrainFile3857 -CheckRemote $false
+    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT' -Dest $script:RbtFile3857 -CheckRemote $true -PublicPrefix $script:PublicS3Prefix3857
+    Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN' -Dest $script:TerrainFile3857 -CheckRemote $false -PublicPrefix $script:PublicS3Prefix3857
 
     if (-not ((Test-Path $script:RbtFile3857 -PathType Leaf) -and (Get-Item $script:RbtFile3857).Length -gt 0)) {
         Write-ErrorAndExit "$($script:RbtFile3857) is missing or empty after download"
@@ -547,8 +576,8 @@ function Get-AllMbtiles {
     if ($script:Use4087) {
         New-Item -ItemType Directory -Force -Path $script:DataDir4087 | Out-Null
 
-        Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT_4087' -Dest $script:RbtFile4087 -CheckRemote $true
-        Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN_4087' -Dest $script:TerrainFile4087 -CheckRemote $false
+        Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT_4087' -Dest $script:RbtFile4087 -CheckRemote $true -PublicPrefix $script:PublicS3Prefix4087
+        Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN_4087' -Dest $script:TerrainFile4087 -CheckRemote $false -PublicPrefix $script:PublicS3Prefix4087
 
         if (-not ((Test-Path $script:RbtFile4087 -PathType Leaf) -and (Get-Item $script:RbtFile4087).Length -gt 0)) {
             Write-ErrorAndExit "$($script:RbtFile4087) is missing or empty after download"
@@ -768,6 +797,13 @@ $script:TerrainFile3857 = Join-Path $script:DataDir3857 'TERRAIN.mbtiles'
 $script:DataDir4087 = Join-Path $script:DataDir '4087'
 $script:RbtFile4087 = Join-Path $script:DataDir4087 'RBT.mbtiles'
 $script:TerrainFile4087 = Join-Path $script:DataDir4087 'TERRAIN.mbtiles'
+# Public, read-only mirror of the MBTiles on an S3-compatible (RustFS)
+# endpoint. Used for every file whose S3_BUCKET_* variable is unset, with
+# anonymous (unsigned) requests, so no AWS credentials are needed.
+$script:PublicS3Endpoint = 'https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net'
+$script:PublicS3Region = 'us-east-1'
+$script:PublicS3Prefix3857 = 's3://mbtiles/3857'
+$script:PublicS3Prefix4087 = 's3://mbtiles/4087'
 $script:ForceDownload = [bool]$Force
 $script:WithNginx = -not [bool]$NoNginx
 $script:Use4087 = [bool]$Use4087
@@ -832,23 +868,6 @@ try {
 
 if ($runInit -and -not (Test-IsAdministrator)) {
     Write-ErrorAndExit "-Init needs an elevated PowerShell session -- it installs software and enables the WSL2 platform.`nRe-open PowerShell as Administrator, cd to this folder, and re-run:`n  $script:ReRunCommand"
-}
-
-if ($runDownload) {
-    if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_RBT)) {
-        Write-ErrorAndExit 'Set $env:S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. $env:S3_BUCKET_RBT = ''my-bucket'' -- or add it to .env (see .env.example)'
-    }
-    if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_TERRAIN)) {
-        Write-ErrorAndExit 'Set $env:S3_BUCKET_TERRAIN to the bucket (and optional prefix) containing TERRAIN.mbtiles -- or add it to .env (see .env.example)'
-    }
-    if ($script:Use4087) {
-        if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_RBT_4087)) {
-            Write-ErrorAndExit 'Set $env:S3_BUCKET_RBT_4087 to the bucket (and optional prefix) containing the EPSG:4087 RBT.mbtiles -- or add it to .env (see .env.example)'
-        }
-        if ([string]::IsNullOrWhiteSpace($env:S3_BUCKET_TERRAIN_4087)) {
-            Write-ErrorAndExit 'Set $env:S3_BUCKET_TERRAIN_4087 to the bucket (and optional prefix) containing the EPSG:4087 TERRAIN.mbtiles -- or add it to .env (see .env.example)'
-        }
-    }
 }
 
 if ($runInit) { Install-Prerequisites }
