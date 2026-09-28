@@ -36,6 +36,10 @@ spec:
       labels:
         {{- include "rbt.selectorLabels" $root | nindent 8 }}
         app.kubernetes.io/component: {{ $key }}
+      annotations:
+        # Rolls the pod whenever config.json or fetch-s3.sh changes --
+        # TileserverGL only reads its config at startup.
+        checksum/config: {{ include (print $root.Template.BasePath "/configmap-tileserver.yaml") $root | sha256sum }}
     spec:
       {{- with $root.Values.imagePullSecrets }}
       imagePullSecrets:

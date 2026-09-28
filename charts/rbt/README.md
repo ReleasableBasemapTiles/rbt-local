@@ -20,15 +20,29 @@ aws s3 sync tileserver/styles s3://my-bucket/styles
 
 ## Installing
 
-From a checkout of this repo (`charts/rbt`), or from GHCR after
+The MapProxy image is a private GHCR package (built by
+[`.github/workflows/mapproxy-image.yml`](../../.github/workflows/mapproxy-image.yml)),
+so the cluster needs a pull secret for it. Create one in the release's
+namespace from a GitHub token with the `read:packages` scope (`kubectl create`
+takes the same arguments):
+
+```bash
+oc create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username=<github-user> \
+  --docker-password=<token>
+```
+
+Then install the chart from GHCR, where
 [`.github/workflows/helm-chart.yml`](../../.github/workflows/helm-chart.yml)
-publishes the chart (`Chart.yaml` version `0.2.0`):
+publishes it (`Chart.yaml` version `0.3.0`):
 
 ```bash
 # Private package -- once per machine / CI job
 echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u USERNAME --password-stdin
 
-helm install rbt oci://ghcr.io/releasablebasemaptile/rbt-local/rbt --version 0.2.0 \
+helm install rbt oci://ghcr.io/releasablebasemaptiles/rbt-local/rbt --version 0.3.0 \
+  --set 'imagePullSecrets[0].name=ghcr-pull' \
   --set s3.accessKeyId=<key> \
   --set s3.secretAccessKey=<secret> \
   --set s3.fontsUri=s3://my-bucket/fonts \
@@ -43,6 +57,7 @@ Or from the chart directory:
 
 ```bash
 helm install rbt charts/rbt \
+  --set 'imagePullSecrets[0].name=ghcr-pull' \
   --set s3.accessKeyId=<key> \
   --set s3.secretAccessKey=<secret> \
   --set s3.fontsUri=s3://my-bucket/fonts \
@@ -55,7 +70,7 @@ helm install rbt charts/rbt \
 
 (Prefer a `-f myvalues.yaml` file over a wall of `--set` flags for anything beyond a quick test -- see `values.yaml` for every available key and its default.)
 
-`helm install`/`upgrade` prints a NOTES block with rollout-status commands, Route URLs, and the same "did MapProxy load the right config" check [docs/deployment-4087.md](../../docs/deployment-4087.md) documents for the Compose deployment. Run `helm test rbt` afterwards to fetch WMTS capabilities from MapProxy in-cluster as a smoke test.
+`helm install`/`upgrade` prints a NOTES block with rollout-status commands, Route URLs, and the same "did MapProxy load the right config" check [docs/deployment-4087.md](../../docs/deployment-4087.md) documents for the Compose deployment. Run `helm test rbt --logs` afterwards as a smoke test: in-cluster, it fetches MapProxy's WMTS capabilities plus one EPSG:3857 and one EPSG:4326 tile, so it fails if MapProxy can't reach a TileserverGL instance, not only if MapProxy itself is down.
 
 ## Single-TileserverGL mode
 
@@ -69,11 +84,11 @@ If every `tileservers.<key>.s3.rbtUri`/`s3.terrainUri` and `s3.fontsUri`/`s3.sty
 
 ## OpenShift compatibility
 
-Every pod's `securityContext` (see `podSecurityContext`/`containerSecurityContext` in `values.yaml`) deliberately omits `runAsUser`/`fsGroup`. OpenShift's `restricted-v2` SCC injects both from the namespace's allocated range *before* the kubelet's `runAsNonRoot` check runs, so this works regardless of what user each image's own `Dockerfile` declares -- including the upstream `mapproxy`/`tileserver-gl` images (named non-root users, `mapproxy`/`node`) and the `aws-cli` image (root by default) alike. Volumes (PVCs, `emptyDir`) need no extra `chgrp` treatment, since the SCC's `fsGroup` strategy makes them group-writable automatically.
+Every pod's `securityContext` (see `podSecurityContext`/`containerSecurityContext` in `values.yaml`) deliberately omits `runAsUser`/`fsGroup`. OpenShift's `restricted-v2` SCC injects both from the namespace's allocated range *before* the kubelet's `runAsNonRoot` check runs, so this works regardless of what user each image's own `Dockerfile` declares -- this repo's MapProxy image (`USER 1000`), the `tileserver-gl` image (the named user `node`), and the `aws-cli` and `busybox` images (root by default) alike. Volumes (PVCs, `emptyDir`) need no extra `chgrp` treatment, since the SCC's `fsGroup` strategy makes them group-writable automatically.
 
 ### Vanilla Kubernetes (without an SCC)
 
-Without an SCC to inject `runAsUser`, `containerSecurityContext.runAsNonRoot: true` (the default) makes the kubelet refuse to start any container whose *effective* user resolves to root -- including the `mapproxy`/`tileserver-gl`/`aws-cli` containers above, if their images happen to default to root or a user Kubernetes can't already tell is non-zero. You'll need to set `containerSecurityContext.runAsUser` (and `podSecurityContext.fsGroup`, so mounted volumes are writable by that UID) to a concrete numeric UID yourself -- Kubernetes' `runAsUser` field takes a number, not the `mapproxy`/`node` usernames those two Dockerfiles declare, and there's no single value this chart can default to that's guaranteed correct for every image and cluster. Recent tags of both upstream images run their main process as UID `1000` (macOS Docker Desktop tolerates this transparently, which is why the Compose deployment never had to think about it) -- check `docker image inspect --format '{{.Config.User}}' <image>` against a real container run if you need the current values.
+Without an SCC to inject `runAsUser`, `runAsNonRoot: true` (the default) makes the kubelet refuse to start any container it can't prove runs as a non-root UID. The `aws-cli` init containers and the `busybox` test pod run as root, and the `tileserver-gl` image's `USER node:node` is a name the kubelet can't check (it fails with `CreateContainerConfigError`). Only this repo's MapProxy image declares a numeric `USER 1000`. So set a non-root `containerSecurityContext.runAsUser` and `podSecurityContext.fsGroup` yourself -- `1000` for both, say. Any non-root UID works, as OpenShift's arbitrary per-namespace UIDs show: the chart points `HOME` at `/tmp`, and `fsGroup` makes the mounted volumes writable by that UID.
 
 ## Why `charts/rbt/files/` duplicates repo-root configs
 
@@ -84,7 +99,7 @@ Helm's `.Files.Get` can only read files inside the chart directory, and its load
 ## Known limitations
 
 - **Service names are literal, not release-scoped.** `tileservers.epsg3857/epsg4087.serviceName` default to the exact `tileservergl`/`tileservergl4087` container names `docker-compose.4087.yaml` uses, unprefixed by the release name (unlike every other resource this chart creates) -- MapProxy's rewritten source URLs need a fixed hostname to target, and this keeps that hostname identical to the Compose deployment's. Two `rbt` releases in the same namespace will collide on these two Service names; set `tileservers.<key>.serviceName` on one of them if you need that.
-- **No Compose-style `depends_on: condition: service_healthy` equivalent.** MapProxy's Deployment doesn't wait for either TileserverGL Deployment to be healthy before starting. This matches how MapProxy actually behaves, though: it doesn't eagerly connect to its tile sources at startup, so it comes up fine regardless of ordering and only 502s the specific tiles it can't yet fetch, self-healing once TileserverGL is ready -- no crash-loop risk. `oc logs` on `mapproxy` if tiles 502 for longer than TileserverGL's own startup should reasonably take (its `startupProbe` allows up to 240s).
-- **`networkPolicy.enabled` (default `false`) is a starting point, not a hardened default** -- see the comment in `templates/networkpolicy.yaml` for the one gap it knowingly leaves (it can't reliably `podSelector`-match every OpenShift router's namespace, so Route-exposed ports stay open to any source rather than guessing at those labels).
+- **No Compose-style `depends_on: condition: service_healthy` equivalent.** MapProxy's Deployment doesn't wait for either TileserverGL Deployment to be healthy before starting. This matches how MapProxy actually behaves, though: it doesn't eagerly connect to its tile sources at startup, so it comes up fine regardless of ordering and only fails the specific requests it can't yet fetch a source tile for (HTTP 500 for a WMTS tile), self-healing once TileserverGL is ready -- no crash-loop risk. `oc logs` on `mapproxy` if tiles keep failing for longer than TileserverGL's own startup should reasonably take (its `startupProbe` allows up to 240s).
+- **`networkPolicy.enabled` (default `false`) is a starting point, not a hardened default.** Each pod accepts traffic from this release's own pods. MapProxy and each Route-enabled TileserverGL also accept their own port from any source, since Route traffic comes from the router and this chart can't reliably `podSelector`-match every OpenShift router's namespace (see the comment in `templates/networkpolicy.yaml`). Egress isn't restricted.
 - **PVC sizes (`tileservers.<key>.persistence.size`, default `200Gi`) are a starting point, not a measured figure** -- ask the RBT team for current `RBT.mbtiles`/`TERRAIN.mbtiles` sizes (see the repo root README's "Get S3 Credentials" section) and size accordingly; the datasets are updated periodically.
-- **MapProxy's tile cache is an ephemeral `emptyDir`**, not a PVC -- it rebuilds from the TileserverGL sources on every pod restart. See the comment above `cache` in `templates/deployment-mapproxy.yaml` if you'd rather it survive restarts (swap for a PVC and change `strategy: RollingUpdate` to `Recreate` if that PVC is ReadWriteOnce).
+- **No tile cache.** MapProxy stores no tiles (every cache in `mapproxy.yaml` sets `disable_storage`), and the Compose deployment's nginx cache isn't part of this chart, so TileserverGL renders every request. For heavy traffic, put a CDN or caching reverse proxy in front of the MapProxy Route -- `nginx/config/nginx.conf` shows the cache policy the Compose deployment uses.

@@ -1,3 +1,11 @@
+{{/*
+`helm test` smoke test, run in-cluster against MapProxy's Service: WMTS
+capabilities, then one EPSG:3857 tile (rendered by the epsg3857
+TileserverGL) and one EPSG:4326 tile (reprojected from epsg4087, or from
+epsg3857 when epsg4087 is disabled). MapProxy answers a tile it can't
+fetch from its source with an HTTP error, so this fails if either
+TileserverGL is unreachable, not just if MapProxy is down.
+*/}}
 apiVersion: v1
 kind: Pod
 metadata:
@@ -12,7 +20,7 @@ spec:
   securityContext:
     {{- toYaml .Values.podSecurityContext | nindent 4 }}
   containers:
-    - name: wmts-capabilities
+    - name: wmts
       image: "{{ .Values.testImage.repository }}:{{ .Values.testImage.tag }}"
       imagePullPolicy: {{ .Values.testImage.pullPolicy }}
       securityContext:
@@ -22,6 +30,29 @@ spec:
         - -c
         - |
           set -eu
-          url="http://{{ include "rbt.fullname" . }}-mapproxy:{{ .Values.mapproxy.service.port }}/wmts/1.0.0/WMTSCapabilities.xml"
-          echo "GET $url"
-          wget -qO- --tries=5 --timeout=10 "$url" | head -5
+          base="http://{{ include "rbt.fullname" . }}-mapproxy:{{ .Values.mapproxy.service.port }}"
+          # fetch PATH: GET $base$PATH into /tmp/body, response headers into
+          # /tmp/headers. 5 attempts -- BusyBox wget has no retry option.
+          fetch() {
+            n=1
+            echo "GET $base$1"
+            until wget -S -q -T 60 -O /tmp/body "$base$1" 2>/tmp/headers; do
+              cat /tmp/headers
+              if [ "$n" -ge 5 ]; then
+                echo "FAILED after $n attempts"
+                return 1
+              fi
+              n=$((n + 1))
+              sleep 5
+            done
+          }
+          fail() { echo "FAILED: $1"; cat /tmp/headers; exit 1; }
+          fetch /wmts/1.0.0/WMTSCapabilities.xml
+          grep -q "<Capabilities" /tmp/body || fail "no <Capabilities> element"
+          # `format: mixed` caches send opaque tiles as JPEG, whatever the
+          # URL's extension, so check for any image type.
+          for tile in rbt_topo_3857/webmercator rbt_topo_4326/geodetic; do
+            fetch "/wmts/$tile/0/0/0.png"
+            grep -qi "content-type: image/" /tmp/headers || fail "not an image"
+          done
+          echo "OK"

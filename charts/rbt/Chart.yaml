@@ -7,7 +7,7 @@ description: >-
   `docker compose -f docker-compose.4087.yaml up -d` (see the repo root's
   docs/deployment-4087.md and docs/advanced-deployment.md).
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "4087"
 keywords:
   - mapproxy
@@ -17,8 +17,8 @@ keywords:
   - wmts
   - basemap
   - openshift
-home: https://github.com/ReleaseableBasemapTiles/rbt-local
+home: https://github.com/ReleasableBasemapTiles/rbt-local
 sources:
-  - https://github.com/ReleaseableBasemapTiles/rbt-local
+  - https://github.com/ReleasableBasemapTiles/rbt-local
 maintainers:
   - name: RBT Team

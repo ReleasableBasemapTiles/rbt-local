@@ -27,9 +27,9 @@ affinity: {}
 # namespace's allocated range, and injects them *before* the runAsNonRoot
 # check runs, so this is safe even for images (like the aws-cli image
 # below) that default to root. Vanilla Kubernetes has no such SCC, so
-# clusters without one must set containerSecurityContext.runAsUser (and,
-# for the mapproxy/tileserver-gl images specifically, a numeric UID -- see
-# charts/rbt/README.md#vanilla-kubernetes-without-an-scc).
+# clusters without one must set a non-root containerSecurityContext.runAsUser
+# and podSecurityContext.fsGroup themselves -- see
+# charts/rbt/README.md#vanilla-kubernetes-without-an-scc.
 podSecurityContext:
   runAsNonRoot: true
 
@@ -49,7 +49,7 @@ containerSecurityContext:
 # ---------------------------------------------------------------------------
 mapproxy:
   image:
-    repository: ghcr.io/releasablebasemaptile/rbt-local/mapproxy
+    repository: ghcr.io/releasablebasemaptiles/rbt-local/mapproxy
     tag: 7.0.0
     pullPolicy: IfNotPresent
   replicaCount: 1
@@ -78,8 +78,9 @@ mapproxy:
     # Leave blank to let OpenShift generate a host from the Route name and
     # the cluster's default ingress domain.
     host: ""
-    # HAProxy's default 30s timeout can cut off a cold-cache tile render
-    # (MapProxy synchronously renders on a cache miss) -- see
+    # HAProxy's default 30s timeout can cut off a slow render under load:
+    # MapProxy stores no tiles (disable_storage in mapproxy.yaml), so every
+    # request waits for TileserverGL to render it -- see
     # docs/deployment-openshift.md.
     timeout: 120s
     annotations: {}
@@ -130,7 +131,7 @@ tileservers:
       # s3.fontsUri/stylesUri blank too).
       existingClaim: ""
     s3:
-      # s3://bucket[/prefix], no filename -- e.g. "s3://my-bucket/exports".
+      # [s3://]bucket[/prefix], no filename -- e.g. "s3://my-bucket/exports".
       # Mirrors deploy.sh's S3_BUCKET_RBT/S3_BUCKET_TERRAIN.
       rbtUri: ""
       terrainUri: ""
@@ -198,7 +199,7 @@ s3:
   region: us-east-1
   # Only needed for an S3-compatible store other than AWS S3 itself.
   endpointUrl: ""
-  # s3://bucket[/prefix] of the fonts/ or styles/ directory tree (no
+  # [s3://]bucket[/prefix] of the fonts/ or styles/ directory tree (no
   # trailing filename). Upload with:
   #   aws s3 sync tileserver/fonts  s3://my-bucket/fonts
   #   aws s3 sync tileserver/styles s3://my-bucket/styles
