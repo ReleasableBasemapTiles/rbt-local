@@ -4,3 +4,14 @@ __pycache__/
 *.pyc
 site/
 site-docs/
+
+# What the stack writes into its bind mounts at runtime (nginx's tile cache
+# and temp files, MapProxy's locks). The tracked .txt files keep the
+# directories in a fresh clone.
+nginx/cache/*
+!nginx/cache/.txt
+mapproxy/data/
+mapproxy/locks/*
+!mapproxy/locks/.txt
+mapproxy/tile_locks/*
+!mapproxy/tile_locks/.txt
