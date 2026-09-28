@@ -87,7 +87,7 @@ If `wsl --install` isn't available on your system, follow Microsoft's [manual in
 
 ### Step 2: Give WSL2 enough memory
 
-WSL2 defaults to using **half of your host's RAM** (and 25% of its swap), shared across every distro you run. This stack alone recommends 16GB, so that default is too small on most laptops. Create (or edit) `%UserProfile%\.wslconfig` **in Windows** (i.e. `C:\Users\<you>\.wslconfig` -- not a path inside WSL) with at least:
+WSL2 defaults to using **half of your host's RAM**, plus a swap file a quarter the size of your RAM, shared across every distro you run. This stack alone recommends 16GB, so that default is too small on most laptops. Create (or edit) `%UserProfile%\.wslconfig` **in Windows** (i.e. `C:\Users\<you>\.wslconfig` -- not a path inside WSL) with at least:
 
 ```ini
 [wsl2]
@@ -146,7 +146,7 @@ sudo apt-get install -y \
 sudo service docker start
 ```
 
-WSL2 doesn't run background services automatically on every launch by default, so you may need to run `sudo service docker start` each time you open a new WSL2 session -- or enable [systemd support](https://learn.microsoft.com/en-us/windows/wsl/systemd) in `/etc/wsl.conf` to avoid that.
+Distributions that run systemd start Docker on every launch. Ubuntu installed with `wsl --install` does by default, and `ps -p 1 -o comm=` prints `systemd` if yours does. Without systemd, run `sudo service docker start` each time you open a new WSL2 session, or enable [systemd support](https://learn.microsoft.com/en-us/windows/wsl/systemd) in `/etc/wsl.conf` to avoid that.
 
 #### Docker Desktop with WSL2
 
