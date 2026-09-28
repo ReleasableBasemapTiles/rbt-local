@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Load heading slugs from a hook file (#17)
+- Review fixes across deploy scripts, nginx, mapproxy, tileserver, chart, ci and docs (#18)
 
 ## [2.0.1] - 2026-09-22
 
