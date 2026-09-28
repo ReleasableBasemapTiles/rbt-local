@@ -48,3 +48,4 @@ nav:
       - EPSG:4087: deployment-4087.md
       - OpenShift: deployment-openshift.md
   - Troubleshooting: troubleshooting.md
+  - Release notes: release-notes.md

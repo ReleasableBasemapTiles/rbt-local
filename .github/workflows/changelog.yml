@@ -1,6 +1,9 @@
-# Regenerate CHANGELOG.md from Conventional Commits via git-cliff.
-# Runs on pushes to main and on v* tags. Bot commits use
-# `chore(changelog): ... [skip ci]` so this workflow does not loop.
+# Regenerate CHANGELOG.md from Conventional Commits via git-cliff, then
+# rebuild the docs site, whose Release notes page is made from that file.
+# Runs on pushes to main and on v* tags. The bot pushes its commit with
+# GITHUB_TOKEN, which starts no workflows, so this one does not loop. The
+# commit carries no [skip ci]: a release tag usually lands on it, and that
+# marker would stop the tag's run.
 
 name: Changelog
 
@@ -47,5 +50,22 @@ jobs:
             echo "CHANGELOG.md is already up to date"
             exit 0
           fi
-          git commit -m "chore(changelog): update CHANGELOG.md [skip ci]"
+          git commit -m "chore(changelog): update CHANGELOG.md"
           git push origin "HEAD:${{ github.event.repository.default_branch }}"
+
+  # Pages built the pushed commit, which predates the changelog commit, and
+  # GITHUB_TOKEN pushes start no workflows; workflow_dispatch is the
+  # exception. Dispatch even when CHANGELOG.md was already current. After two
+  # quick merges, the first update can commit both entries, and a late Pages
+  # run for the second merge can then replace the run it dispatched.
+  republish-docs:
+    needs: update
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Rebuild the docs site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run pages.yml --ref "${{ github.event.repository.default_branch }}"

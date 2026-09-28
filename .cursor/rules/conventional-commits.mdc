@@ -25,4 +25,4 @@ docs: document the four Compose deployments
 chore(ci): add git-cliff changelog workflow
 ```
 
-Breaking changes: `feat!: ...` or a `BREAKING CHANGE:` footer. Do not hand-edit `CHANGELOG.md` for ordinary work; the Changelog workflow regenerates it. Changelog bot commits use `chore(changelog): update CHANGELOG.md [skip ci]`.
+Breaking changes: `feat!: ...` or a `BREAKING CHANGE:` footer. Do not hand-edit `CHANGELOG.md` for ordinary work; the Changelog workflow regenerates it. Changelog bot commits use `chore(changelog): update CHANGELOG.md`.

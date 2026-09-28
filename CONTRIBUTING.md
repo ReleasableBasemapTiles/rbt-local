@@ -58,7 +58,7 @@ Squash-merging uses the **PR title** as the commit on `main`, which is the line 
 
 ## Changelog updates
 
-Do not edit `CHANGELOG.md` by hand for ordinary work. After merge (or after you push a `v*` tag), the Changelog workflow rewrites the file and commits `chore(changelog): update CHANGELOG.md [skip ci]`.
+Do not edit `CHANGELOG.md` by hand for ordinary work. After merge (or after you push a `v*` tag), the Changelog workflow rewrites the file, commits `chore(changelog): update CHANGELOG.md`, and re-runs the Pages workflow, so the docs site's [Release notes](https://releasablebasemaptiles.github.io/rbt-local/release-notes/) page matches the file.
 
 GitHub Releases are still created by hand (`gh release create`). Repo tags like `v2.0.0` are the changelog versions; they are independent of the Helm chart's version (in `charts/rbt/Chart.yaml`) and the MapProxy image tag (`7.0.0`).
 

@@ -1,5 +1,7 @@
 # Build the guides with MkDocs and publish them to GitHub Pages.
 # Pull requests only build. Pushes to main upload the site and deploy it.
+# So do the runs that changelog.yml dispatches after it updates CHANGELOG.md,
+# which keep the Release notes page current.
 # The repo Pages source must be "GitHub Actions".
 
 name: Pages
