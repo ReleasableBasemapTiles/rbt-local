@@ -51,6 +51,12 @@ filter_commits = false
 topo_order = false
 sort_commits = "oldest"
 tag_pattern = "v[0-9].*"
+# Link each "(#N)" pull request number, like the one a squash merge adds to
+# its title. GitHub doesn't autolink #N in repository files, and neither does
+# the docs site.
+commit_preprocessors = [
+    { pattern = '\(#([0-9]+)\)', replace = "([#${1}](https://github.com/ReleasableBasemapTiles/rbt-local/pull/${1}))" },
+]
 commit_parsers = [
     { message = "(?i)^chore\\(changelog\\)", skip = true },
     { message = "(?i)^chore\\(release\\)", skip = true },
