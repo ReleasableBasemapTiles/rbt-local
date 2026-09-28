@@ -25,41 +25,45 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 
 ## Get the Map Data
 
-RBT serves two files -- `RBT.mbtiles` and `TERRAIN.mbtiles` -- which `tileserver/config/config.json` references by these exact names. The deploy scripts download both into `tileserver/data/3857/` for you (and, with `--4087`/`-Use4087`, the [EPSG:4087 deployment](docs/deployment-4087.md)'s own pair into `tileserver/data/4087/`) from a public, read-only mirror, so **no credentials are needed**. The mirror is an S3-compatible endpoint that the AWS CLI reads anonymously; to see the current files and their sizes:
+RBT serves two map files -- `RBT.mbtiles` (the vector map) and `TERRAIN.mbtiles` (elevation data, for hillshading) -- which `tileserver/config/config.json` references by these exact names. Both are published on a public, read-only mirror, so **there's no access to request and no AWS credentials to set up**: the deploy scripts download them for you as part of the first deployment.
+
+### How the deploy scripts download it
+
+`./deploy.sh` (or `.\deploy.ps1` on Windows) runs a download step after installing the prerequisites and before starting the stack. It uses the AWS CLI -- which the script installs -- in anonymous mode (`--no-sign-request`) to copy each file from the mirror to the folder its TileserverGL container reads from:
+
+| Deployment | Downloaded from the mirror | Into |
+| --- | --- | --- |
+| Every deployment | `s3://mbtiles/3857/RBT.mbtiles`, `s3://mbtiles/3857/TERRAIN.mbtiles` | `tileserver/data/3857/` |
+| [EPSG:4087](docs/deployment-4087.md) (`--4087` / `-Use4087`) | `s3://mbtiles/4087/RBT.mbtiles`, `s3://mbtiles/4087/TERRAIN.mbtiles` | `tileserver/data/4087/` |
+
+The files are large, so the first run takes a while. To check their current sizes (and your free disk space) beforehand:
 
 ```bash
 aws s3 ls s3://mbtiles/ --recursive --human-readable --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
 ```
 
-### Downloading the map data by hand
+On later runs the download step only fetches what changed:
 
-The deploy scripts download the data for you. If you're following one of the manual install guides instead, run these from the `rbt-local` directory:
+- `TERRAIN.mbtiles` is downloaded once, and then left alone.
+- `RBT.mbtiles` is downloaded again whenever the mirror's copy is newer than yours.
+- `--force` / `-Force` downloads both again regardless.
+- Whenever a file is downloaded, the script restarts any running TileserverGL and empties nginx's tile cache, so a running stack serves the new data straight away.
+
+To download or update just the data, without re-running the other steps:
 
 ```bash
-# EPSG:3857 -- every deployment
-aws s3 cp s3://mbtiles/3857/RBT.mbtiles tileserver/data/3857/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
-aws s3 cp s3://mbtiles/3857/TERRAIN.mbtiles tileserver/data/3857/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
-
-# EPSG:4087 -- only for the EPSG:4087 deployment
-aws s3 cp s3://mbtiles/4087/RBT.mbtiles tileserver/data/4087/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
-aws s3 cp s3://mbtiles/4087/TERRAIN.mbtiles tileserver/data/4087/ --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
+./deploy.sh --download        # add --4087 for the EPSG:4087 deployment
 ```
 
-TileserverGL reads MBTiles only at startup, so after replacing them on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` on that deployment): it restarts TileserverGL and empties nginx's tile cache.
+```powershell
+.\deploy.ps1 -Download        # add -Use4087 for the EPSG:4087 deployment
+```
+
+TileserverGL reads the files only at startup. If you replace them some other way on a running stack, run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` on that deployment) to restart it and empty nginx's tile cache.
 
 ### Using your own S3 bucket
 
-To download from your own S3 bucket instead of the public mirror (the [Helm chart](charts/rbt) always does):
-
-1. Email [Tom Boggess](mailto:Thomas.J.Boggess@usace.army.mil) to request S3 credentials, and wait for approval (this may take a few days)
-2. Configure AWS CLI by running:
-   ```bash
-   aws configure --profile rbt
-   ```
-   Enter the provided Access Key ID, Secret Access Key, and set the region to `us-east-1`
-3. In `.env` (copied from [`.env.example`](.env.example)), set `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` (plus `S3_BUCKET_RBT_4087`/`S3_BUCKET_TERRAIN_4087` for `--4087`) to the bucket paths the RBT team gave you, and uncomment `AWS_PROFILE=rbt`. Any file whose variable you leave unset still comes from the public mirror.
-
-By hand, that's `aws s3 cp s3://<bucket-path>/RBT.mbtiles tileserver/data/3857/ --profile rbt` (and the same for `TERRAIN.mbtiles`); `aws s3 ls s3://<bucket-path>/ --profile rbt` lists what's there.
+This is optional -- most deployments should use the public mirror. To download from a different bucket instead (for example, a copy you host yourself), set `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` in `.env` to that bucket's path (plus `S3_BUCKET_RBT_4087`/`S3_BUCKET_TERRAIN_4087` for `--4087`; see [`.env.example`](.env.example)). Then give the AWS CLI credentials for that bucket -- for example with `aws configure --profile rbt`, uncommenting `AWS_PROFILE=rbt` in `.env`. Any file whose variable you leave unset still comes from the public mirror. The [Helm chart](charts/rbt) always downloads from a bucket like this, with credentials.
 
 ## Quickstart
 
@@ -70,9 +74,9 @@ By hand, that's `aws s3 cp s3://<bucket-path>/RBT.mbtiles tileserver/data/3857/ 
    cd rbt-local
    ```
 
-2. **Optionally, copy `.env.example` to `.env`** to change ports, bind address, or other settings. You don't need it for the map data: the deploy scripts download that from the public mirror (see [Get the Map Data](#get-the-map-data), including how to use your own S3 bucket instead).
+2. **Optionally, copy `.env.example` to `.env`** to change ports, bind address, or other settings. You don't need it for the map data.
 
-3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data, and starts RBT -- no other manual steps required.
+3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data from the public mirror (no credentials needed -- see [How the deploy scripts download it](#how-the-deploy-scripts-download-it)), and starts RBT. No other manual steps are required.
 
    **macOS or Linux:**
 

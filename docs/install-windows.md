@@ -58,11 +58,12 @@ Clone to a path on your `C:` drive (e.g. `C:\Users\<you>\rbt-local`) rather than
 
 ### Step 4: Download the map data and start RBT
 
-Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first, as described in [Downloading the map data by hand](../README.md#downloading-the-map-data-by-hand) in the main README. This repo's config files do need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
+Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first with the deploy script's download step, which doesn't need an elevated PowerShell. It needs only the AWS CLI from Step 1 -- the data comes from a public mirror, so there are no credentials to set up (see [Get the Map Data](../README.md#get-the-map-data) in the main README). This repo's config files do need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
 
 ```powershell
-# Download the map data (see "Downloading the map data by hand" in the main
-# README), then start the RBT stack from the rbt-local directory
+# Download the map data into tileserver\data\3857\ (add -Use4087 for the
+# EPSG:4087 deployment), then start the RBT stack from the rbt-local directory
+.\deploy.ps1 -Download
 docker compose up -d
 
 # Check logs
@@ -193,10 +194,14 @@ sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
 sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
 sudo chmod 775 nginx/cache
 
-# Download the map data (see "Downloading the map data by hand" in the main
-# README), then start the RBT stack from the rbt-local directory. With Docker
-# Engine, docker needs root: prefix its commands with sudo, or add yourself to
-# the docker group (root-equivalent access) with `sudo usermod -aG docker $USER`
+# Download the map data into tileserver/data/3857/ (add --4087 for the
+# EPSG:4087 deployment) from the public mirror -- no credentials needed (see
+# "Get the Map Data" in the main README). Run it as your normal user.
+./deploy.sh --download
+
+# Start the RBT stack from the rbt-local directory. With Docker Engine,
+# docker needs root: prefix its commands with sudo, or add yourself to the
+# docker group (root-equivalent access) with `sudo usermod -aG docker $USER`
 # and open a new WSL2 terminal. Docker Desktop's WSL integration needs neither.
 docker compose up -d
 

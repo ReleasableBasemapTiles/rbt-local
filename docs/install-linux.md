@@ -79,7 +79,7 @@ sudo systemctl enable --now docker;
 
 ## Shared steps (all distributions)
 
-Between cloning and starting the stack, download the map data as described in [Downloading the map data by hand](../README.md#downloading-the-map-data-by-hand) in the main README.
+Between cloning and starting the stack, download the map data with the deploy script's download step. It needs only the AWS CLI installed above, run as your normal user -- the data comes from a public mirror, so there are no credentials to set up (see [Get the Map Data](../README.md#get-the-map-data) in the main README).
 
 ```bash
 # Clone the RBT project
@@ -95,11 +95,14 @@ sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
 sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
 sudo chmod 775 nginx/cache
 
-# Download the map data (see "Downloading the map data by hand" in the main
-# README), then start the RBT stack from the rbt-local directory. Docker
-# needs root: prefix its commands with sudo, as here, or add yourself to the
-# docker group (root-equivalent access) with `sudo usermod -aG docker $USER`
-# and log out and back in.
+# Download the map data into tileserver/data/3857/ (add --4087 for the
+# EPSG:4087 deployment), as your normal user -- not with sudo
+./deploy.sh --download
+
+# Start the RBT stack from the rbt-local directory. Docker needs root:
+# prefix its commands with sudo, as here, or add yourself to the docker
+# group (root-equivalent access) with `sudo usermod -aG docker $USER` and
+# log out and back in.
 sudo docker compose up -d
 
 # Check logs

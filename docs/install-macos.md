@@ -37,11 +37,12 @@ cd rbt-local
 
 ## Step 4: Download the map data and start RBT
 
-Unlike Linux, there's no `chown`/`chmod` permissions step here -- Docker Desktop's VirtioFS file sharing maps your host user into the container regardless of macOS file permissions, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first, as described in [Downloading the map data by hand](../README.md#downloading-the-map-data-by-hand) in the main README.
+Unlike Linux, there's no `chown`/`chmod` permissions step here -- Docker Desktop's VirtioFS file sharing maps your host user into the container regardless of macOS file permissions, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first with the deploy script's download step. It needs only the AWS CLI from Step 1 -- the data comes from a public mirror, so there are no credentials to set up (see [Get the Map Data](../README.md#get-the-map-data) in the main README).
 
 ```bash
-# Download the map data (see "Downloading the map data by hand" in the main
-# README), then start the RBT stack from the rbt-local directory
+# Download the map data into tileserver/data/3857/ (add --4087 for the
+# EPSG:4087 deployment), then start the RBT stack from the rbt-local directory
+./deploy.sh --download
 docker compose up -d
 
 # Check logs
