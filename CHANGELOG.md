@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Download MBTiles from the public RBT mirror by default ([#22](https://github.com/ReleasableBasemapTiles/rbt-local/pull/22))
+
 ### Changed
 
 - Publish the guides on GitHub Pages ([#16](https://github.com/ReleasableBasemapTiles/rbt-local/pull/16))
