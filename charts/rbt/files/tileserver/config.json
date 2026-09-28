@@ -6,7 +6,10 @@
         "mbtiles": "../data",
         "styles": "../styles"
       },
-      "serveAllFonts": true
+      "serveAllFonts": true,
+      "maxScaleFactor": 2,
+      "minRendererPoolSizes": [4, 2],
+      "maxRendererPoolSizes": [16, 8]
     },
     "data": {
       "TERRAIN": {

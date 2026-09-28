@@ -84,6 +84,21 @@ Docker Desktop uses the WSL2 platform's shared utility VM for its engine on Wind
 
 - **Solution**: Open Docker Desktop's **Settings -> Resources -> Advanced** and increase the memory limit, then apply and restart the engine.
 
+## TileserverGL Uses Too Much Memory, or Renders Slowly Under Load
+
+TileserverGL renders raster tiles with pools of MapLibre renderers: one pool per style, per scale factor (`@2x` tiles have their own) and per request type (tiles and static maps). [`tileserver/config/config.json`](../tileserver/config/config.json) sizes them:
+
+- `minRendererPoolSizes` (`[4, 2]`): renderers each 1x and 2x pool creates at startup and keeps -- 6 styles x 2 request types x (4 + 2) = 72 in total.
+- `maxRendererPoolSizes` (`[16, 8]`): how far each pool grows under load before requests queue.
+- `maxScaleFactor` (`2`): the largest `@Nx` suffix served; `@3x` and up are rejected. None of the setups in [Connecting GIS Clients](gis-clients.md) requests more than `@2x`.
+
+To tune them:
+
+- **Too much memory**: lower the `maxRendererPoolSizes` entries, and the `minRendererPoolSizes` ones for fewer idle renderers.
+- **Slow at the start of a burst**: raise `minRendererPoolSizes` towards `maxRendererPoolSizes`, memory permitting, so fewer renderers are created on demand. TileserverGL's own defaults are `[8, 4, 2]`, `[16, 8, 4]` and `3` (168 renderers at startup here).
+
+Restart TileserverGL after editing (`docker compose restart tileservergl`, plus `tileservergl4087` in the [EPSG:4087 stack](deployment-4087.md)). For the Helm chart, re-run `charts/rbt/sync-files.sh` and upgrade the release.
+
 ## `deploy.sh --init` Times Out Waiting for the Docker Engine (macOS)
 
 - **Cause**: Docker Desktop's very first launch after install can require a one-time GUI step (accepting a license, granting privileged-helper access) that can't be scripted.
