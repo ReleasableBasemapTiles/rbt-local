@@ -2,7 +2,7 @@
 The PR title must be a Conventional Commit. It becomes the changelog
 entry when the PR is squash-merged. Examples:
 
-  feat(helm): fetch fonts and styles from S3
+  feat(deploy): download MBTiles from the public mirror by default
   fix(mapproxy): mount mapproxy.4087.yaml in the --4087 stack
   docs: document the four Compose deployments
   chore(ci): add git-cliff changelog workflow
