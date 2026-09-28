@@ -1,6 +1,6 @@
 # Releasable Basemap Tiles (RBT)
 
-RBT (Releasable Basemap Tiles) is a web application that provides map tiles for military and coalition partners. Think of it like Google Maps, but designed for military use with maps that can be safely shared internationally -- vector tiles instead of the older raster formats (like CADRG), for smaller files, sharper rendering at any zoom, and easier coalition sharing. See [Architecture](docs/architecture.md) for the full explanation, the technical design, and diagrams. Release history is in [CHANGELOG.md](CHANGELOG.md); commit and pull-request titles follow [CONTRIBUTING.md](CONTRIBUTING.md).
+RBT (Releasable Basemap Tiles) is a web application that provides map tiles for military and coalition partners. Think of it like Google Maps, but designed for military use with maps that can be safely shared internationally -- vector tiles instead of the older raster formats (like CADRG), for smaller files, sharper rendering at any zoom, and easier coalition sharing. See [Architecture](docs/architecture.md) for the full explanation, the technical design, and diagrams. Release history is in the [release notes](CHANGELOG.md); commit and pull-request titles follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 This guide walks through deploying RBT with **Docker Compose** on a single host (a workstation, VM, or on-premises server) running **macOS**, **Windows 11**, or **Linux**. Don't worry if you're new to any of these tools -- each command below is meant to be copied and pasted, one at a time, and the [Glossary](#glossary-of-terms) at the end explains the terms this guide uses.
 
@@ -165,6 +165,7 @@ Something not working? See [Troubleshooting](docs/troubleshooting.md) for common
 - [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md) -- a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output
 - [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md) -- the same stack as deployment 4 above, deployed to Kubernetes/OpenShift with `charts/rbt` instead of Compose
 - [Troubleshooting](docs/troubleshooting.md)
+- [Release notes](CHANGELOG.md) -- what changed in each release
 - [CONTRIBUTING.md](CONTRIBUTING.md) -- commit conventions and the checks CI runs on every pull request
 
 ## Glossary of Terms
