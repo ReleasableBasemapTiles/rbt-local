@@ -72,5 +72,6 @@ jobs:
             - Rewrite `style.json` sources, sprite, and glyphs for local mbtiles serving
 
             ## Test plan
-            - [ ] Confirm `style.json` uses `mbtiles://{RBT}`, `mbtiles://{TERRAIN}`, `{styleJsonFolder}/sprite`, and `{fontstack}/{range}.pbf`
+            - [ ] Confirm `style.json` uses `mbtiles://{RBT}`, `mbtiles://{TERRAIN}` (if it has a TERRAIN source), `{styleJsonFolder}/sprite`, and `{fontstack}/{range}.pbf`
+            - [ ] Check the workflow run's warnings for local styles missing upstream
             - [ ] Confirm no svg directories were added under `tileserver/styles`

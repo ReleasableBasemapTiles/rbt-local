@@ -2,9 +2,10 @@
 """Copy matching tileserver styles from an upstream styles checkout.
 
 Only directories present in both trees are updated. Directories whose names
-contain "svg" are skipped. PNG filenames are lowercased so sprite.PNG replaces
-sprite.png. style.json source, sprite, and glyph URLs are rewritten in the
-original file text for this repo's tileserver.
+contain "svg" are skipped, along with everything under them. PNG extensions are
+lowercased so sprite.PNG replaces sprite.png. style.json source, sprite, and
+glyph URLs are rewritten in the original file text for this repo's tileserver,
+which serves only the RBT and TERRAIN MBTiles (tileserver/config/config.json).
 """
 
 from __future__ import annotations
@@ -16,14 +17,18 @@ import shutil
 import sys
 from pathlib import Path
 
-RBT_URL = "mbtiles://{RBT}"
-TERRAIN_URL = "mbtiles://{TERRAIN}"
+# Every style needs RBT; TERRAIN is optional (a style may have no hillshade).
+SOURCE_URLS = {"RBT": "mbtiles://{RBT}", "TERRAIN": "mbtiles://{TERRAIN}"}
 SPRITE = "{styleJsonFolder}/sprite"
 GLYPHS = "{fontstack}/{range}.pbf"
 
 
 def is_svg_dir(name: str) -> bool:
     return "svg" in name.lower()
+
+
+def in_svg_dir(path: Path, root: Path) -> bool:
+    return any(is_svg_dir(part) for part in path.relative_to(root).parts)
 
 
 def iter_files(root: Path):
@@ -74,8 +79,15 @@ def rewrite_style(path: Path, label: str) -> None:
     if not isinstance(sources, dict):
         raise SystemExit(f"{label}: style.json has no sources object")
 
-    for name in ("RBT", "TERRAIN"):
-        source = sources.get(name)
+    unknown = sorted(set(sources) - set(SOURCE_URLS))
+    if unknown:
+        raise SystemExit(
+            f"{label}: style.json has sources this tileserver doesn't serve: "
+            f"{', '.join(unknown)} (only {' and '.join(SOURCE_URLS)})"
+        )
+    if "RBT" not in sources:
+        raise SystemExit(f"{label}: style.json is missing sources.RBT")
+    for name, source in sources.items():
         if not isinstance(source, dict) or not isinstance(source.get("url"), str):
             raise SystemExit(f"{label}: style.json is missing sources.{name}.url")
 
@@ -83,26 +95,23 @@ def rewrite_style(path: Path, label: str) -> None:
         if not isinstance(data.get(key), str):
             raise SystemExit(f"{label}: style.json is missing {key}")
 
-    original_terrain = dict(sources["TERRAIN"])
-    text = replace_unique(text, sources["RBT"]["url"], RBT_URL, f"{label} sources.RBT.url")
-    text = replace_unique(
-        text, sources["TERRAIN"]["url"], TERRAIN_URL, f"{label} sources.TERRAIN.url"
-    )
+    for name, source in sources.items():
+        text = replace_unique(
+            text, source["url"], SOURCE_URLS[name], f"{label} sources.{name}.url"
+        )
     text = replace_unique(text, data["sprite"], SPRITE, f"{label} sprite")
     text = replace_unique(text, data["glyphs"], GLYPHS, f"{label} glyphs")
 
     rewritten = json.loads(text)
-    terrain = rewritten["sources"]["TERRAIN"]
-    if rewritten["sources"]["RBT"]["url"] != RBT_URL or terrain["url"] != TERRAIN_URL:
-        raise SystemExit(f"{label}: source URLs were not rewritten")
+    for name, source in sources.items():
+        new = rewritten["sources"][name]
+        if new["url"] != SOURCE_URLS[name]:
+            raise SystemExit(f"{label}: sources.{name}.url was not rewritten")
+        for key in ("type", "tileSize", "encoding"):
+            if new.get(key) != source.get(key):
+                raise SystemExit(f"{label}: sources.{name}.{key} changed")
     if rewritten["sprite"] != SPRITE or rewritten["glyphs"] != GLYPHS:
         raise SystemExit(f"{label}: sprite or glyphs were not rewritten")
-    if terrain.get("tileSize") != original_terrain.get("tileSize"):
-        raise SystemExit(f"{label}: sources.TERRAIN.tileSize changed")
-    if terrain.get("encoding") != original_terrain.get("encoding"):
-        raise SystemExit(f"{label}: sources.TERRAIN.encoding changed")
-    if rewritten["sources"]["RBT"].get("type") != sources["RBT"].get("type"):
-        raise SystemExit(f"{label}: sources.RBT.type changed")
 
     write_style_text(path, text)
 
@@ -123,7 +132,7 @@ def should_keep(existing: Path, dest_style: Path, keep: set[Path]) -> bool:
 def prune_empty_dirs(root: Path) -> None:
     for dirpath, _dirnames, _filenames in os.walk(root, topdown=False):
         current = Path(dirpath)
-        if current == root or is_svg_dir(current.name):
+        if current == root or in_svg_dir(current, root):
             continue
         if not any(current.iterdir()):
             current.rmdir()
@@ -183,7 +192,8 @@ def main() -> int:
     upstream_names = style_dirs(upstream)
     dest_names = style_dirs(dest)
     for name in sorted(dest_names - upstream_names):
-        print(f"leave {name} (not in upstream checkout)")
+        # A workflow annotation, so a style upstream renamed or removed shows up.
+        print(f"::warning::{name} is not in the upstream checkout; left as is")
 
     matched = sorted(dest_names & upstream_names)
     if not matched:
