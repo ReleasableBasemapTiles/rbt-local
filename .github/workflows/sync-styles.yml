@@ -30,10 +30,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Checkout upstream styles
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: ReleasableBasemapTiles/styles
           ref: main
@@ -57,7 +57,7 @@ jobs:
         run: rm -rf upstream-styles
 
       - name: Open pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: chore/sync-styles
