@@ -23,6 +23,6 @@ Commit subject must be a Conventional Commit:
 
 Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
 
-Example: feat(helm): fetch fonts and styles from S3
+Example: feat(deploy): download MBTiles from the public mirror by default
 EOF
 exit 1

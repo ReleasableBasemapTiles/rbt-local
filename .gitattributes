@@ -12,7 +12,6 @@
 *.conf      text eol=lf
 *.json      text eol=lf
 *.sh        text eol=lf
-*.tpl       text eol=lf
 Dockerfile* text eol=lf
 # Copied to .env, and a shell script git runs as a hook.
 .env.example text eol=lf

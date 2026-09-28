@@ -87,8 +87,8 @@ def release_notes(text: str, *, root: Path) -> str:
         "# Release notes\n"
         "\n"
         "What changed in each release, newest first. Releases are this repository's `v*` tags,"
-        " numbered with [Semantic Versioning](https://semver.org/spec/v2.0.0.html); the Helm"
-        " chart and the MapProxy image have version numbers of their own. **Unreleased** lists"
+        " numbered with [Semantic Versioning](https://semver.org/spec/v2.0.0.html); the MapProxy"
+        " image has a version number of its own. **Unreleased** lists"
         " what has merged to `main` since the latest release. The same notes are in"
         f" [CHANGELOG.md]({github_url(root, 'CHANGELOG.md')}) on GitHub.\n"
     )

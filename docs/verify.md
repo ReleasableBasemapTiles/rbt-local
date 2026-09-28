@@ -49,7 +49,6 @@ The checks above are for the default deployment. For the others (see [Deployment
 
 - **Without nginx** (`--no-nginx`/`-NoNginx`): `docker compose -f docker-compose.yaml ps` lists only `mapproxy` and `tileservergl`. Nothing listens on port 8082, so skip `/healthz` and run the other checks against each service's own port, without the path prefix -- `http://localhost:8080/styles.json` and `http://localhost:8081/wmts/1.0.0/WMTSCapabilities.xml`, say. Responses have no `X-Cache-Status` header, since nothing is cached.
 - **EPSG:4087** (`--4087`/`-Use4087`): run `docker compose ps` with the same `-f` flags you deployed with; it also lists `tileservergl4087`. Then check that MapProxy loaded `mapproxy.4087.yaml` -- see [Verifying it's working](deployment-4087.md#verifying-its-working) in the EPSG:4087 guide.
-- **Helm**: see [Verifying it's working](deployment-openshift.md#verifying-its-working) in the OpenShift guide.
 
 ## Next steps
 

@@ -72,8 +72,6 @@ This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../doc
   docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
   ```
 
-  On the Helm chart, use the `head -1` check in [Deploying to OpenShift](deployment-openshift.md#verifying-its-working) instead.
-
 ## `mapproxy` Container Exits, or Can't Write Its Lock Files
 
 On **Linux or WSL2**, this is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
@@ -108,7 +106,7 @@ To tune them:
 - **Too much memory**: lower the `maxRendererPoolSizes` entries, and the `minRendererPoolSizes` ones for fewer idle renderers.
 - **Slow at the start of a burst**: raise `minRendererPoolSizes` towards `maxRendererPoolSizes`, memory permitting, so fewer renderers are created on demand. TileserverGL's own defaults are `[8, 4, 2]`, `[16, 8, 4]` and `3` (168 renderers at startup here).
 
-Restart TileserverGL after editing (`docker compose restart tileservergl`, plus `tileservergl4087` in the [EPSG:4087 stack](deployment-4087.md)). For the Helm chart, re-run `charts/rbt/sync-files.sh` and upgrade the release.
+Restart TileserverGL after editing (`docker compose restart tileservergl`, plus `tileservergl4087` in the [EPSG:4087 stack](deployment-4087.md)).
 
 ## `deploy.sh --init` Times Out Waiting for the Docker Engine (macOS)
 

@@ -1,10 +1,10 @@
 # EPSG:4087 overlay on mapproxy.yaml, for the dual-TileserverGL stack (see
 # docs/deployment-4087.md). MapProxy loads this file instead of
 # mapproxy.yaml there -- docker-compose.4087.yaml points MAPPROXY_CONFIG at
-# it, and the Helm chart ships it as mapproxy.yaml -- and `base:` merges it
-# over mapproxy.yaml, so this file holds only what changes: an EPSG:4087
-# source and cache per style, fed by the second TileserverGL container
-# (tileservergl4087), with the EPSG:4326 caches re-pointed at them.
+# it -- and `base:` merges it over mapproxy.yaml, so this file holds only
+# what changes: an EPSG:4087 source and cache per style, fed by the second
+# TileserverGL container (tileservergl4087), with the EPSG:4326 caches
+# re-pointed at them.
 #
 # How MapProxy merges `base:`: mappings merge key by key, and a `sources`,
 # `grids`, `bbox`, `tile_size` or `res` list replaces the base file's. Any
