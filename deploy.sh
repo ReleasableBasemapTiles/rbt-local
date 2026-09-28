@@ -622,7 +622,10 @@ fix_permissions() {
   fi
 
   as_root chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-  as_root chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks
+  # 775 directories, 664 files. Git tracks the executable bit, so the old
+  # `chmod -R 775` showed the locks dirs' .txt placeholders as modified (and
+  # made `git pull` abort on a change to one); a-x repairs those clones.
+  as_root chmod -R a-x,ug+rwX,o+rX mapproxy/data mapproxy/locks mapproxy/tile_locks
   # nginx's master process runs as root and creates (and chowns) whatever it
   # needs inside this itself, so only the top level matters -- recursing
   # into nginx/cache would walk every cached tile on every run.

@@ -184,10 +184,13 @@ cd rbt-local
 ### Step 5: Set permissions and start RBT
 
 ```bash
-# The mapproxy container writes to these directories as uid/gid 1000,
-# which is also the default uid/gid of the first user WSL creates for you.
+# The mapproxy container runs as uid/gid 1000 (Dockerfile.mapproxy) and
+# writes to these directories -- also the uid/gid of the first user WSL
+# creates for you. mapproxy/data isn't in the repo, so create it first.
+mkdir -p mapproxy/data
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache
+sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
+sudo chmod 775 nginx/cache
 
 # Download the map data (see "Get S3 Credentials" in the main README) before
 # continuing, then start the RBT stack from the rbt-local directory

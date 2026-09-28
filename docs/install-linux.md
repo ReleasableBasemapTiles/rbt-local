@@ -74,13 +74,14 @@ git lfs install
 git clone https://github.com/ReleaseableBasemapTiles/rbt-local.git && \
     cd rbt-local
 
-# The mapproxy container writes to these directories as uid/gid 1000 --
-# the uid baked into the upstream MapProxy image, and also the default
-# uid of the first non-root user on most Linux distributions. Check
-# your own user's ids with `id -u` and `id -g` if you suspect they
-# differ, and substitute below.
+# The mapproxy container runs as uid/gid 1000 (Dockerfile.mapproxy) and
+# writes to these directories, so they belong to 1000:1000 whatever your
+# own uid is. mapproxy/data isn't in the repo, so create it first.
+# (./deploy.sh runs these same steps.)
+mkdir -p mapproxy/data
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-sudo chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache
+sudo chmod -R ug+rwX mapproxy/data mapproxy/locks mapproxy/tile_locks
+sudo chmod 775 nginx/cache
 
 # Download the map data (see "Get S3 Credentials" in the main README) before
 # continuing, then start the RBT stack from the rbt-local directory
