@@ -72,7 +72,7 @@ This guide documents a **Docker Compose** deployment suitable for a single host 
 
 ## Deployment Variants
 
-The README's [Deployment Options](../README.md#deployment-options) compares the four Compose deployments and the Helm chart. Each diagram below shows default ports; every port is configurable in `.env` (see [.env.example](../.env.example)).
+The README's [Deployment Options](../README.md#deployment-options) compares the four Compose deployments. Each diagram below shows default ports; every port is configurable in `.env` (see [.env.example](../.env.example)).
 
 ### 1. Default: nginx in front of both services
 
@@ -181,9 +181,7 @@ flowchart LR
   tileservergl4087 --- shared
 ```
 
-### 5. OpenShift/Kubernetes via Helm
-
-[`charts/rbt`](../charts/rbt) deploys the same containers as deployment 4 to a Kubernetes/OpenShift cluster, with the MBTiles, fonts, and styles downloaded from S3 into PVCs instead of bind-mounted. [Advanced: Deploying to OpenShift with Helm](deployment-openshift.md#architecture) has its diagram.
+Kubernetes/OpenShift deployments aren't covered here: their Helm charts live in the separate [ReleasableBasemapTiles/charts](https://github.com/ReleasableBasemapTiles/charts) repository.
 
 ## Tile Caching
 
@@ -194,7 +192,7 @@ MapProxy stores no tiles -- every cache in `mapproxy.yaml` sets `disable_storage
 - **Checking it**: every response through port 8082 has an `X-Cache-Status` header: `MISS` when nginx had to fetch an image from the backend, `HIT` when it served one from the cache, and `BYPASS` for a request it never caches (`EXPIRED`, `STALE`, and `UPDATING` show up around a cached image's 30-day expiry, or while a backend is down). [Verifying Your Installation](verify.md) shows a `MISS` followed by a `HIT`.
 - **Emptying it**: nginx can't tell when the MBTiles or styles behind a cached image change. `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`, adding `--4087`/`-Use4087` in deployment 3) empties the cache and restarts TileserverGL; the deploy scripts do this automatically when their download step fetched new MBTiles. Run it yourself after replacing MBTiles or editing a style by hand.
 
-Without nginx (deployments 2 and 4) and on the Helm chart, nothing is cached and TileserverGL renders every request. For heavy traffic there, put a CDN or caching reverse proxy in front of MapProxy -- `nginx.conf` shows the policy this stack uses.
+Without nginx (deployments 2 and 4), nothing is cached and TileserverGL renders every request. For heavy traffic there, put a CDN or caching reverse proxy in front of MapProxy -- `nginx.conf` shows the policy this stack uses.
 
 ## Component Reference
 

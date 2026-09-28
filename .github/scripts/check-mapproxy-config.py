@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """Load MapProxy's configs the way the image does, failing on any error.
 
-Checks mapproxy/config/mapproxy.yaml and mapproxy.4087.yaml, then the Helm
-chart's rendering of them (charts/rbt/templates/configmap-mapproxy.yaml)
-with tileservers.epsg4087.enabled on and off, which must merge to the same
-config as the repo file it ships. Needs MapProxy (the version
-Dockerfile.mapproxy installs) and helm on PATH.
+Checks mapproxy/config/mapproxy.yaml and mapproxy.4087.yaml. Needs MapProxy
+(the version Dockerfile.mapproxy installs).
 
     python3 .github/scripts/check-mapproxy-config.py
 """
 
 from __future__ import annotations
 
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-import yaml
 from mapproxy.config.loader import load_configuration, load_configuration_file
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,29 +53,9 @@ def check(path: Path, label: str) -> dict:
     return config
 
 
-def render_chart(enabled: bool, dest: Path) -> Path:
-    """Writes the chart's MapProxy ConfigMap files to dest, as the pod sees them."""
-    rendered = subprocess.run(
-        ["helm", "template", "ci", str(ROOT / "charts" / "rbt"),
-         "--show-only", "templates/configmap-mapproxy.yaml",
-         "--set", f"tileservers.epsg4087.enabled={str(enabled).lower()}"],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    for name, text in yaml.safe_load(rendered)["data"].items():
-        (dest / name).write_text(text)
-    return dest / "mapproxy.yaml"
-
-
 def main() -> None:
-    repo_configs = {
-        True: check(CONFIG_DIR / "mapproxy.4087.yaml", "mapproxy/config/mapproxy.4087.yaml"),
-        False: check(CONFIG_DIR / "mapproxy.yaml", "mapproxy/config/mapproxy.yaml"),
-    }
-    for enabled, expected in repo_configs.items():
-        label = f"chart with tileservers.epsg4087.enabled={str(enabled).lower()}"
-        with tempfile.TemporaryDirectory() as tmp:
-            if check(render_chart(enabled, Path(tmp)), label) != expected:
-                sys.exit(f"{label}: mapproxy.yaml doesn't merge to the same config as the repo file")
+    check(CONFIG_DIR / "mapproxy.4087.yaml", "mapproxy/config/mapproxy.4087.yaml")
+    check(CONFIG_DIR / "mapproxy.yaml", "mapproxy/config/mapproxy.yaml")
 
 
 if __name__ == "__main__":

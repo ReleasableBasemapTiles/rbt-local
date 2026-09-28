@@ -16,7 +16,6 @@ mapproxy/locks
 mapproxy/tile_locks
 
 nginx
-charts
 docs
 *.md
 

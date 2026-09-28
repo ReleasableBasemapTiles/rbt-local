@@ -12,7 +12,7 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 | Run each setup step yourself | Follow the manual guide for your OS | [macOS](docs/install-macos.md), [Linux](docs/install-linux.md), [Windows 11](docs/install-windows.md) |
 | Put an AWS ALB or CloudFront in front, instead of the local nginx | Add `--no-nginx` (or `-NoNginx`) | [Deploying Without nginx](docs/advanced-deployment.md) |
 | Get sharper EPSG:4326 maps | Add `--4087` (or `-Use4087`) | [The EPSG:4087 Deployment](docs/deployment-4087.md) |
-| Run on Kubernetes or OpenShift | Install the Helm chart in [`charts/rbt`](charts/rbt) | [Deploying to OpenShift](docs/deployment-openshift.md) |
+| Run on Kubernetes or OpenShift | Use the Helm charts in the separate [ReleasableBasemapTiles/charts](https://github.com/ReleasableBasemapTiles/charts) repository -- this one covers Docker deployments only | [ReleasableBasemapTiles/charts](https://github.com/ReleasableBasemapTiles/charts) |
 | Check a running deployment, or connect QGIS/ArcGIS | Start from the [endpoints](#endpoints) below | [Verifying](docs/verify.md), [GIS clients](docs/gis-clients.md) |
 
 ## Requirements
@@ -63,7 +63,7 @@ TileserverGL reads the files only at startup. If you replace them some other way
 
 ### Using your own S3 bucket
 
-This is optional -- most deployments should use the public mirror. To download from a different bucket instead (for example, a copy you host yourself), set `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` in `.env` to that bucket's path (plus `S3_BUCKET_RBT_4087`/`S3_BUCKET_TERRAIN_4087` for `--4087`; see [`.env.example`](.env.example)). Then give the AWS CLI credentials for that bucket -- for example with `aws configure --profile rbt`, uncommenting `AWS_PROFILE=rbt` in `.env`. Any file whose variable you leave unset still comes from the public mirror. The [Helm chart](charts/rbt) always downloads from a bucket like this, with credentials.
+This is optional -- most deployments should use the public mirror. To download from a different bucket instead (for example, a copy you host yourself), set `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` in `.env` to that bucket's path (plus `S3_BUCKET_RBT_4087`/`S3_BUCKET_TERRAIN_4087` for `--4087`; see [`.env.example`](.env.example)). Then give the AWS CLI credentials for that bucket -- for example with `aws configure --profile rbt`, uncommenting `AWS_PROFILE=rbt` in `.env`. Any file whose variable you leave unset still comes from the public mirror.
 
 ## Quickstart
 
@@ -96,7 +96,7 @@ Prefer to see, or run, each step by hand instead of via the script? See [Install
 
 ## Deployment Options
 
-This repository's three Compose files combine into four deployments on a single Docker host, and a Helm chart covers Kubernetes/OpenShift. All five publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326. What differs is whether a local nginx fronts (and caches) the services, and which projection the EPSG:4326 layers are reprojected from:
+This repository's three Compose files combine into four deployments on a single Docker host (for Kubernetes/OpenShift, see the separate [ReleasableBasemapTiles/charts](https://github.com/ReleasableBasemapTiles/charts) repository). All four publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326. What differs is whether a local nginx fronts (and caches) the services, and which projection the EPSG:4326 layers are reprojected from:
 
 | Deployment | Deploy it with | Compose files | nginx and its tile cache | EPSG:4326 reprojected from |
 | --- | --- | --- | --- | --- |
@@ -104,7 +104,6 @@ This repository's three Compose files combine into four deployments on a single 
 | 2. [Without nginx](docs/advanced-deployment.md) (AWS ALB / CloudFront) | `--no-nginx` / `-NoNginx` | `docker-compose.yaml` | No | EPSG:3857 |
 | 3. [EPSG:4087](docs/deployment-4087.md) dual-TileserverGL | `--4087` / `-Use4087` | `docker-compose.yaml` + `docker-compose.4087.yaml` + `docker-compose.override.yaml` | Yes | EPSG:4087 |
 | 4. EPSG:4087 without nginx | `--4087 --no-nginx` / `-Use4087 -NoNginx` | `docker-compose.yaml` + `docker-compose.4087.yaml` | No | EPSG:4087 |
-| 5. [Kubernetes/OpenShift](docs/deployment-openshift.md) | `helm install` with [`charts/rbt`](charts/rbt) | -- | No | EPSG:4087 (or EPSG:3857, with one TileserverGL) |
 
 The default deployment looks like this -- [Architecture](docs/architecture.md#deployment-variants) has a diagram of each:
 
@@ -180,7 +179,6 @@ Something not working? See [Troubleshooting](docs/troubleshooting.md) for common
 - [Connecting GIS Clients to RBT](docs/gis-clients.md)
 - [Advanced: Deploying Without nginx](docs/advanced-deployment.md) -- for AWS ALB/CloudFront deployments
 - [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md) -- a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output
-- [Advanced: Deploying to OpenShift with Helm](docs/deployment-openshift.md) -- the same stack as deployment 4 above, deployed to Kubernetes/OpenShift with `charts/rbt` instead of Compose
 - [Troubleshooting](docs/troubleshooting.md)
 - [Release notes](CHANGELOG.md) -- what changed in each release
 - [CONTRIBUTING.md](CONTRIBUTING.md) -- commit conventions and the checks CI runs on every pull request
