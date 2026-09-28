@@ -5,7 +5,8 @@
         "fonts": "../fonts",
         "mbtiles": "../data",
         "styles": "../styles"
-      }
+      },
+      "serveAllFonts": true
     },
     "data": {
       "TERRAIN": {
