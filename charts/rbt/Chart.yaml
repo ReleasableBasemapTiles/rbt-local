@@ -3,9 +3,10 @@ name: rbt
 description: >-
   Releasable Basemap Tiles (RBT): MapProxy fronting two TileserverGL
   instances (EPSG:3857 and EPSG:4087), with no nginx -- the Kubernetes/
-  OpenShift equivalent of docker-compose.4087.yaml deployed via
-  `docker compose -f docker-compose.4087.yaml up -d` (see the repo root's
-  docs/deployment-4087.md and docs/advanced-deployment.md).
+  OpenShift equivalent of the Compose EPSG:4087 stack deployed via
+  `docker compose -f docker-compose.yaml -f docker-compose.4087.yaml up -d`
+  (see the repo root's docs/deployment-4087.md and
+  docs/advanced-deployment.md).
 type: application
 version: 0.3.0
 appVersion: "4087"

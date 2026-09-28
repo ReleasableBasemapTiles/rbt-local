@@ -1,7 +1,9 @@
 # WSGI module for use with Apache mod_wsgi or gunicorn
 # Vendored from https://github.com/mapproxy/mapproxy/blob/master/docker/app.py
-# (MapProxy 7.0.0). Paths are hardcoded -- compose/helm select the 4087
-# config by bind-mounting it over /mapproxy/config/mapproxy.yaml.
+# (MapProxy 7.0.0), plus MAPPROXY_CONFIG: the config file to load, default
+# /mapproxy/config/mapproxy.yaml. docker-compose.4087.yaml sets it to
+# mapproxy.4087.yaml; the Helm chart leaves it unset (see
+# charts/rbt/templates/configmap-mapproxy.yaml).
 
 from logging.config import fileConfig
 import os
@@ -24,5 +26,7 @@ if multiapp_mapproxy:
 else:
     from mapproxy.wsgiapp import make_wsgi_app
 
-    print('Starting MapProxy in single app mode')
-    application = make_wsgi_app(r'/mapproxy/config/mapproxy.yaml', reloader=True)
+    mapproxy_config = os.environ.get('MAPPROXY_CONFIG') or r'/mapproxy/config/mapproxy.yaml'
+
+    print('Starting MapProxy in single app mode with ' + mapproxy_config)
+    application = make_wsgi_app(mapproxy_config, reloader=True)

@@ -86,11 +86,12 @@ regardless of the order given on the command line):
               mapproxy (port ${MAPPROXY_PORT:-8081}) and tileservergl
               (port ${TILESERVER_PORT:-8080}) instead. Only relevant with
               --deploy, or with no step flags.
-  --4087      Deploy docker-compose.4087.yaml instead of docker-compose.yaml
-              -- adds a second TileserverGL container (tileservergl4087)
-              serving EPSG:4087 MBTiles, and points mapproxy at
-              mapproxy.4087.yaml so its EPSG:4326 caches reproject from
-              EPSG:4087 instead of EPSG:3857 (see docs/deployment-4087.md).
+  --4087      Also deploy docker-compose.4087.yaml, an overlay on
+              docker-compose.yaml that adds a second TileserverGL container
+              (tileservergl4087) serving EPSG:4087 MBTiles, and points
+              mapproxy at mapproxy.4087.yaml so its EPSG:4326 caches
+              reproject from EPSG:4087 instead of EPSG:3857 (see
+              docs/deployment-4087.md).
               Combines with --no-nginx and --force. With --download (or no
               step flags), also downloads the EPSG:4087 RBT.mbtiles/
               TERRAIN.mbtiles into tileserver/data/4087/.
@@ -821,15 +822,14 @@ if [[ "$OS_FAMILY" == "unknown" ]]; then
   warn "Could not identify this host as macOS, Ubuntu/Debian, or Fedora/RHEL. --init will stop with an error if it doesn't know how to install prerequisites here; --download, --perm, --refresh, and --deploy should still work as long as aws, docker (with the Compose plugin), and git are already installed."
 fi
 
-# The compose files (and tileserver services) this run's stack is made of --
-# docker-compose.override.yaml (nginx) layers on top of either base file
-# identically, since both declare the same service names.
+# The compose files (and tileserver services) this run's stack is made of, in
+# merge order: docker-compose.yaml, then the docker-compose.4087.yaml overlay
+# (--4087), then docker-compose.override.yaml (nginx, unless --no-nginx).
+COMPOSE_FILE_NAMES=(docker-compose.yaml)
+TILESERVER_SERVICES=(tileservergl)
 if [[ "$USE_4087" -eq 1 ]]; then
-  COMPOSE_FILE_NAMES=(docker-compose.4087.yaml)
-  TILESERVER_SERVICES=(tileservergl tileservergl4087)
-else
-  COMPOSE_FILE_NAMES=(docker-compose.yaml)
-  TILESERVER_SERVICES=(tileservergl)
+  COMPOSE_FILE_NAMES+=(docker-compose.4087.yaml)
+  TILESERVER_SERVICES+=(tileservergl4087)
 fi
 if [[ "$WITH_NGINX" -eq 1 ]]; then
   COMPOSE_FILE_NAMES+=(docker-compose.override.yaml)

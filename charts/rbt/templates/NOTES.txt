@@ -56,15 +56,15 @@ cluster; see docs/deployment-openshift.md.
 {{- end }}
 {{- end }}
 
-Confirm MapProxy actually loaded the config you expect -- same
-silent-fallback failure mode as the Compose deployment (see
-docs/deployment-4087.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged):
+Confirm MapProxy loaded the config you expect (see
+docs/troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged):
   oc exec deploy/{{ include "rbt.fullname" . }}-mapproxy -n {{ .Release.Namespace }} -- head -1 /mapproxy/config/mapproxy.yaml
 {{- if .Values.tileservers.epsg4087.enabled }}
-  # expect: "# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its"
+  # expect: "# EPSG:4087 overlay on mapproxy.yaml, for the dual-TileserverGL stack (see"
 {{- else }}
   # expect: "services:" (tileservers.epsg4087.enabled=false uses the plain mapproxy.yaml)
 {{- end }}
 
-Run the chart's connection test (fetches WMTS capabilities from mapproxy in-cluster):
-  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+Run the chart's connection test (fetches MapProxy's WMTS capabilities and
+one EPSG:3857 and one EPSG:4326 tile in-cluster):
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }} --logs

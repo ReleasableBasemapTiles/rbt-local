@@ -44,15 +44,19 @@ This means the `mapproxy` container isn't listening where nginx expects it (`map
 
 ## The 4087 Stack Is Up, but EPSG:4326 Tiles Look Unchanged
 
-This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../docker-compose.4087.yaml)). The MapProxy image's WSGI entry point always loads `/mapproxy/config/mapproxy.yaml` inside the container and ignores any command-line argument -- there is no environment variable or flag to point it at a different file. `docker-compose.4087.yaml`'s `mapproxy` service selects [mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml) by bind-mounting it directly onto that path. If that mount is ever removed or reordered, MapProxy silently falls back to the regular `mapproxy.yaml` -- containers stay healthy and nothing errors, but the EPSG:4326 caches keep reprojecting from EPSG:3857 and `tileservergl4087` never receives requests from MapProxy.
+This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../docker-compose.4087.yaml)). MapProxy loads the file named by the `MAPPROXY_CONFIG` environment variable, which `docker-compose.4087.yaml` sets to [mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml). Without it, MapProxy loads the regular `mapproxy.yaml`: containers stay healthy and nothing errors, but the EPSG:4326 caches keep reprojecting from EPSG:3857 and `tileservergl4087` never receives requests from MapProxy.
 
-- **Solution**: Confirm the mount is in place and the right file is loaded:
+- **Solution**: Check that the variable is set, and that MapProxy read the file -- it logs each config file it reads at startup (if the log has rotated since then, `docker restart mapproxy` first):
 
   ```bash
-  docker exec mapproxy head -1 /mapproxy/config/mapproxy.yaml
-  # expect: "# Sibling of mapproxy.yaml, used only by docker-compose.4087.yaml (see its"
-  # if instead you see something like "services:", mapproxy.yaml (not mapproxy.4087.yaml) is loaded
+  docker exec mapproxy printenv MAPPROXY_CONFIG
+  # expect: /mapproxy/config/mapproxy.4087.yaml
+  docker logs mapproxy 2>&1 | grep -o 'reading: .*' | sort -u
+  # expect: reading: /mapproxy/config/mapproxy.4087.yaml
+  #         reading: /mapproxy/config/mapproxy.yaml       (the file it builds on)
   ```
+
+  If `printenv` prints nothing, the stack was started without `docker-compose.4087.yaml`: deploy with `-f docker-compose.yaml -f docker-compose.4087.yaml` (or `--4087`/`-Use4087`). If it prints the path but MapProxy only read `mapproxy.yaml`, the `mapproxy` image predates `MAPPROXY_CONFIG`: rebuild it with `docker compose ... build mapproxy` and recreate the container (the deploy scripts always rebuild it).
 
   Then confirm MapProxy is actually querying the second tileserver:
 
@@ -61,7 +65,7 @@ This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../doc
   docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
   ```
 
-  If the wrong config is loaded, check the `mapproxy` service's `volumes` in `docker-compose.4087.yaml` for a bind mount of `./mapproxy/config/mapproxy.4087.yaml` onto `/mapproxy/config/mapproxy.yaml`, and confirm you're deploying with `-f docker-compose.4087.yaml` (or `--4087`/`-Use4087`) rather than the default `docker-compose.yaml`.
+  On the Helm chart, use the `head -1` check in [Deploying to OpenShift](deployment-openshift.md#verifying-its-working) instead.
 
 ## `mapproxy` Container Exits, or Can't Write Its Cache
 

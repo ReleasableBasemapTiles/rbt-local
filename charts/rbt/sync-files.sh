@@ -3,10 +3,11 @@
 # Copies mapproxy/config/* and tileserver/config/config.json from the repo
 # root into charts/rbt/files/ -- Helm's .Files.Get can only read files
 # inside the chart directory (charts/rbt/), so these are plain copies, not
-# symlinks (Helm's loader skips symlinks -- see charts/rbt/README.md
-# "Why these files are duplicated"). Re-run this after editing any of the
-# five source files below, then re-run `helm template`/`helm lint` on
-# charts/rbt to confirm the change took effect in the rendered manifests.
+# symlinks (Helm's loader skips symlinks -- see "Why charts/rbt/files/
+# duplicates repo-root configs" in charts/rbt/README.md). Re-run this after
+# editing any of the five source files below, then re-run `helm template`/
+# `helm lint` on charts/rbt to confirm the change took effect in the
+# rendered manifests.
 #
 #   ./charts/rbt/sync-files.sh          # copy repo configs into the chart
 #   ./charts/rbt/sync-files.sh --check  # diff instead of copy (exits 1 on drift, for CI)
@@ -27,7 +28,14 @@ PAIRS=(
 )
 
 CHECK=0
-[[ "${1:-}" == "--check" ]] && CHECK=1
+case "$#:${1:-}" in
+  0:) ;;
+  1:--check) CHECK=1 ;;
+  *)
+    echo "Usage: $0 [--check]" >&2
+    exit 2
+    ;;
+esac
 
 drifted=0
 for pair in "${PAIRS[@]}"; do
@@ -35,7 +43,7 @@ for pair in "${PAIRS[@]}"; do
   dest="${pair#*:}"
 
   if [[ "$CHECK" -eq 1 ]]; then
-    if ! diff -q "$src" "$dest" >/dev/null 2>&1; then
+    if ! diff -u "$dest" "$src" >&2; then
       echo "DRIFT: $dest is out of date with $src" >&2
       drifted=1
     fi

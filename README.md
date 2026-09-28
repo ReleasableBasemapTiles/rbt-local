@@ -57,7 +57,7 @@ Prefer to see, or run, each step by hand instead of via the script? See [Install
 
 ## Deployment Options
 
-This repository's three Compose files combine into four Docker Compose deployments, plus a fifth, Helm-based option for Kubernetes/OpenShift. All five publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326 -- so what differs is whether a local nginx fronts the services, and which projection the EPSG:4326 tiles are reprojected from. The diagrams below show default ports; every port is configurable in `.env` (see [.env.example](.env.example)). Options 3 and 4 name `docker-compose.4087.yaml` with an explicit `-f` instead of relying on the auto-discovered `docker-compose.yaml`, so `docker compose ps`/`logs`/`down` need those same `-f` flags -- `./deploy.sh`'s and `.\deploy.ps1`'s closing hints print the exact command for whichever stack you just deployed.
+This repository's three Compose files combine into four Docker Compose deployments, plus a fifth, Helm-based option for Kubernetes/OpenShift. All five publish the same MapProxy WMS/WMTS layers -- six styles, each in EPSG:3857, EPSG:3395, and EPSG:4326 -- so what differs is whether a local nginx fronts the services, and which projection the EPSG:4326 tiles are reprojected from. The diagrams below show default ports; every port is configurable in `.env` (see [.env.example](.env.example)). Options 3 and 4 add the `docker-compose.4087.yaml` overlay with explicit `-f` flags instead of relying on the auto-discovered files, so `docker compose ps`/`logs`/`down` need those same `-f` flags (or `COMPOSE_FILE` in `.env` -- see [.env.example](.env.example)) -- `./deploy.sh`'s and `.\deploy.ps1`'s closing hints print the exact command for whichever stack you just deployed.
 
 ### 1. Default: nginx in front of both services
 
@@ -109,13 +109,13 @@ flowchart LR
 
 ### 3. EPSG:4087 dual-TileserverGL with nginx
 
-`./deploy.sh --4087` or `.\deploy.ps1 -Use4087` deploys `docker-compose.4087.yaml` in place of `docker-compose.yaml`, adding a second TileserverGL container that serves EPSG:4087 MBTiles from `tileserver/data/4087`, with nginx fronting all of it exactly like option 1. MapProxy runs `mapproxy.4087.yaml`, which builds its EPSG:4326 caches from that container instead of from EPSG:3857 -- a pure unit-scale conversion rather than a resample away from Web Mercator's distortion, so EPSG:4326 output stays sharp away from the equator. The EPSG:3857 and EPSG:3395 layers still come from the original container, and the published layer list is unchanged. See [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md).
+`./deploy.sh --4087` or `.\deploy.ps1 -Use4087` adds the `docker-compose.4087.yaml` overlay to `docker-compose.yaml`, which adds a second TileserverGL container that serves EPSG:4087 MBTiles from `tileserver/data/4087`, with nginx fronting all of it exactly like option 1. MapProxy runs `mapproxy.4087.yaml`, an overlay on `mapproxy.yaml` that builds its EPSG:4326 caches from that container instead of from EPSG:3857 -- a pure unit-scale conversion rather than a resample away from Web Mercator's distortion, so EPSG:4326 output stays sharp away from the equator. The EPSG:3857 and EPSG:3395 layers still come from the original container, and the published layer list is unchanged. See [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md).
 
 ```mermaid
 flowchart LR
   client(["Browser / GIS client"])
 
-  subgraph stack["docker-compose.4087.yaml + docker-compose.override.yaml"]
+  subgraph stack["docker-compose.yaml + docker-compose.4087.yaml + docker-compose.override.yaml"]
     nginx["nginx<br/>port 8082"]
     mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
     tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
@@ -140,14 +140,14 @@ flowchart LR
 
 ### 4. EPSG:4087 dual-TileserverGL without nginx
 
-`./deploy.sh --4087 --no-nginx`, `.\deploy.ps1 -Use4087 -NoNginx`, or `docker compose -f docker-compose.4087.yaml up -d` combines options 2 and 3: the same EPSG:4087-backed EPSG:4326 reprojection as option 3, but with nginx skipped like option 2. All three containers publish their own port directly -- MapProxy (`MAPPROXY_PORT`, default `8081`), the EPSG:3857 TileserverGL (`TILESERVER_PORT`, default `8080`), and the EPSG:4087 TileserverGL (`TILESERVER_4087_PORT`, default `8083`) -- ready to sit behind an ALB/CloudFront the same way option 2 does. See [Advanced: Deploying Without nginx](docs/advanced-deployment.md#combining-with-the-epsg4087-deployment).
+`./deploy.sh --4087 --no-nginx`, `.\deploy.ps1 -Use4087 -NoNginx`, or `docker compose -f docker-compose.yaml -f docker-compose.4087.yaml up -d` combines options 2 and 3: the same EPSG:4087-backed EPSG:4326 reprojection as option 3, but with nginx skipped like option 2. All three containers publish their own port directly -- MapProxy (`MAPPROXY_PORT`, default `8081`), the EPSG:3857 TileserverGL (`TILESERVER_PORT`, default `8080`), and the EPSG:4087 TileserverGL (`TILESERVER_4087_PORT`, default `8083`) -- ready to sit behind an ALB/CloudFront the same way option 2 does. See [Advanced: Deploying Without nginx](docs/advanced-deployment.md#combining-with-the-epsg4087-deployment).
 
 ```mermaid
 flowchart LR
   client(["Browser / GIS client"])
   edge(["AWS ALB / CloudFront<br/>optional, external to this stack"])
 
-  subgraph stack["docker-compose.4087.yaml only"]
+  subgraph stack["docker-compose.yaml + docker-compose.4087.yaml"]
     mapproxy["mapproxy<br/>port 8081<br/>runs mapproxy.4087.yaml"]
     tileservergl["tileservergl<br/>port 8080<br/>EPSG:3857 MBTiles"]
     tileservergl4087["tileservergl4087<br/>port 8083<br/>EPSG:4087 MBTiles"]

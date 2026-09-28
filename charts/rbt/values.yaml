@@ -1,9 +1,9 @@
 # Default values for the rbt chart.
 #
-# This deploys the same three containers as docker-compose.4087.yaml run
-# with `docker compose -f docker-compose.4087.yaml up -d` (no nginx --
-# docker-compose.override.yaml is never part of this chart): MapProxy plus
-# two TileserverGL instances (EPSG:3857 and EPSG:4087). See
+# This deploys the same three containers as the Compose EPSG:4087 stack,
+# `docker compose -f docker-compose.yaml -f docker-compose.4087.yaml up -d`
+# (no nginx -- docker-compose.override.yaml is never part of this chart):
+# MapProxy plus two TileserverGL instances (EPSG:3857 and EPSG:4087). See
 # docs/deployment-openshift.md and charts/rbt/README.md for the full
 # picture, including why some values below (serviceName, PVC sizes, S3
 # URIs) have no safe generic default and must be set per-environment.
@@ -60,7 +60,7 @@ mapproxy:
     # Workers kept running when idle (more start under load, up to
     # `processes`). Must be lower than `processes`; 0 keeps all running.
     cheaper: 4
-  # emptyDir-backed /dev/shm -- matches docker-compose.4087.yaml's
+  # emptyDir-backed /dev/shm -- matches docker-compose.yaml's
   # `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
   shm:
     sizeLimit: 2Gi
@@ -99,11 +99,13 @@ tileserverImage:
 
 # Two TileserverGL Deployments, one per projection -- see
 # docs/deployment-4087.md for why EPSG:4087 improves EPSG:4326 output.
-# serviceName defaults to the exact container_name docker-compose.4087.yaml
-# uses; mapproxy's own ConfigMap (see templates/configmap-mapproxy.yaml)
-# rewrites mapproxy.yaml/mapproxy.4087.yaml's hardcoded
-# `http://tileservergl(4087)?:8080` source URLs to whatever these are set
-# to, so change them here rather than editing that YAML by hand.
+# epsg4087.enabled also picks MapProxy's config: mapproxy.4087.yaml when
+# true, the plain mapproxy.yaml when false. serviceName defaults to the
+# exact container_name Compose uses; mapproxy's own ConfigMap (see
+# templates/configmap-mapproxy.yaml) rewrites mapproxy.yaml/
+# mapproxy.4087.yaml's hardcoded `http://tileservergl(4087)?:8080` source
+# URLs to whatever these are set to, so change them here rather than
+# editing that YAML by hand.
 tileservers:
   epsg3857:
     enabled: true

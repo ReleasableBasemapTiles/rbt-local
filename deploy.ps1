@@ -65,11 +65,12 @@ of the order given on the command line):
              AWS ALB and/or CloudFront) talks HTTP directly to mapproxy
              (port 8081 by default) and tileservergl (port 8080 by default)
              instead. Only relevant with -Deploy, or with no step switches.
-  -Use4087   Deploy docker-compose.4087.yaml instead of docker-compose.yaml
-             -- adds a second TileserverGL container (tileservergl4087)
-             serving EPSG:4087 MBTiles, and points mapproxy at
-             mapproxy.4087.yaml so its EPSG:4326 caches reproject from
-             EPSG:4087 instead of EPSG:3857 (see docs/deployment-4087.md).
+  -Use4087   Also deploy docker-compose.4087.yaml, an overlay on
+             docker-compose.yaml that adds a second TileserverGL container
+             (tileservergl4087) serving EPSG:4087 MBTiles, and points
+             mapproxy at mapproxy.4087.yaml so its EPSG:4326 caches
+             reproject from EPSG:4087 instead of EPSG:3857 (see
+             docs/deployment-4087.md).
              Combines with -NoNginx and -Force. With -Download (or no step
              switches), also downloads the EPSG:4087 RBT.mbtiles/
              TERRAIN.mbtiles into tileserver\data\4087\.
@@ -799,15 +800,14 @@ if ($env:OS -ne 'Windows_NT') {
     Write-WarningLine 'This script is designed for native Windows 11; continuing anyway.'
 }
 
-# The compose files (and tileserver services) this run's stack is made of --
-# docker-compose.override.yaml (nginx) layers on top of either base file
-# identically, since both declare the same service names.
+# The compose files (and tileserver services) this run's stack is made of, in
+# merge order: docker-compose.yaml, then the docker-compose.4087.yaml overlay
+# (-Use4087), then docker-compose.override.yaml (nginx, unless -NoNginx).
+$script:ComposeFileNames = @('docker-compose.yaml')
+$script:TileserverServices = @('tileservergl')
 if ($script:Use4087) {
-    $script:ComposeFileNames = @('docker-compose.4087.yaml')
-    $script:TileserverServices = @('tileservergl', 'tileservergl4087')
-} else {
-    $script:ComposeFileNames = @('docker-compose.yaml')
-    $script:TileserverServices = @('tileservergl')
+    $script:ComposeFileNames += 'docker-compose.4087.yaml'
+    $script:TileserverServices += 'tileservergl4087'
 }
 if ($script:WithNginx) {
     $script:ComposeFileNames += 'docker-compose.override.yaml'

@@ -105,7 +105,7 @@ spec:
         # only lock files are written here -- no tiles.
         - name: cache
           emptyDir: {}
-        # docker-compose.4087.yaml's `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
+        # docker-compose.yaml's `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
         - name: dshm
           emptyDir:
             medium: Memory
