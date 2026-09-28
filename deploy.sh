@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Bootstrap a macOS or Linux (Ubuntu/Debian or Fedora/RHEL) host and deploy
-# the RBT Docker Compose stack. See README.md for the manual equivalent of
-# each step, or run with --help.
+# the RBT Docker Compose stack. See docs/install-macos.md or
+# docs/install-linux.md for the manual equivalent of each step, or run with
+# --help.
 #
 #   S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
 
@@ -22,28 +23,61 @@ TERRAIN_FILE_4087="$DATA_DIR_4087/TERRAIN.mbtiles"
 FORCE_DOWNLOAD=0
 WITH_NGINX=1
 USE_4087=0
+# Set by fetch_mbtiles whenever it actually downloads a file, so the refresh
+# step knows the running tileservers (and nginx's tile cache) are now stale.
+DATA_UPDATED=0
+# 1 when the steps that need root must go through sudo -- set in "Main".
+NEED_SUDO=0
 
 log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARNING:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Runs "$@" as root: via sudo when NEED_SUDO=1, else directly (already root,
+# or macOS, where nothing needs it). A function rather than a "${SUDO[@]}"
+# array prefix because expanding an empty array under `set -u` is an
+# "unbound variable" error in bash < 4.4 -- which is what macOS ships as
+# /bin/bash.
+as_root() {
+  if [[ "$NEED_SUDO" -eq 1 ]]; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+# sudo resets the environment, so an exported DEBIAN_FRONTEND never reaches
+# apt-get through it -- pass it on the command line instead.
+apt_get() {
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get "$@"
+}
+
 usage() {
   cat <<'EOF'
 deploy.sh - Bootstrap a macOS or Linux host and deploy the RBT Docker Compose stack.
 
-With no flags, all four steps below run in order. Pass one or more step
-flags to run only those steps (still in the order listed here, regardless
-of the order given on the command line):
+With no step flags, --init, --download, --perm, and --deploy run in order
+(plus --refresh whenever --download fetched new data). Pass one or more
+step flags to run only those steps (still in the order listed here,
+regardless of the order given on the command line):
 
   --init      Install prerequisites: AWS CLI v2, Docker (Docker Desktop on
-              macOS; Docker Engine + Compose plugin on Linux), git/git-lfs.
+              macOS; Docker Engine + Compose plugin on Linux), and git.
               Uses Homebrew on macOS, apt on Ubuntu/Debian, or dnf on
               Fedora/RHEL, whichever this host's /etc/os-release identifies.
   --download  Download RBT.mbtiles/TERRAIN.mbtiles from S3 into
-              tileserver/data/3857/.
+              tileserver/data/3857/. Whenever this actually fetches a file,
+              --refresh runs too.
   --perm      Fix mapproxy/nginx runtime directory permissions (a no-op on
               macOS -- see below).
-  --deploy    Run `docker compose up -d`.
+  --refresh   Make the stack serve the current data: recreate any running
+              tileservergl container (it reads MBTiles and styles only at
+              startup) and empty nginx's tile cache, restarting nginx if it
+              is running. Run this yourself after changing MBTiles or
+              styles by hand.
+  --deploy    Start Docker if it isn't running, then run
+              `docker compose up -d --wait`, failing if any service doesn't
+              become healthy.
   --force     Re-download mbtiles even if already present (only relevant
               together with --download, or with no step flags).
   --no-nginx  Deploy mapproxy and tileservergl only, without the local
@@ -65,6 +99,7 @@ Usage:
   S3_BUCKET_RBT=my-bucket S3_BUCKET_TERRAIN=my-other-bucket ./deploy.sh
   ./deploy.sh --init                # just install prerequisites
   ./deploy.sh --download --perm     # just refresh data + permissions
+  ./deploy.sh --refresh             # reload styles/MBTiles, purge cache
   ./deploy.sh --deploy              # just (re)start the stack
   ./deploy.sh --force               # full run, force re-download
   ./deploy.sh --no-nginx            # full run, skip the local nginx
@@ -73,7 +108,9 @@ Usage:
 
 Run this as your normal (non-root) user, not via `sudo`. On Linux it
 escalates internally with sudo only for the specific steps that need root
-(apt/dnf, installing/starting Docker, chown). On macOS nothing here uses
+(apt/dnf, installing/starting Docker, chown, docker compose). Because sudo
+drops your shell's variables, put Compose settings such as NGINX_PORT in
+.env rather than exporting them. On macOS nothing here uses
 sudo -- Homebrew and Docker Desktop both install and run as your normal
 user. Either way, running it unprivileged means `aws s3 cp` uses your own
 AWS credential chain (env vars, ~/.aws/credentials, AWS_PROFILE, or an
@@ -99,7 +136,8 @@ Re-running this script is safe: package installs are skipped when already
 present. TERRAIN.mbtiles is only downloaded once (it never changes upstream).
 RBT.mbtiles is re-downloaded automatically whenever the S3 object's
 LastModified time is newer than the local copy's -- pass --force to
-re-download either file unconditionally.
+re-download either file unconditionally. Either way, a download that
+fetched anything is followed by --refresh.
 EOF
 }
 
@@ -119,6 +157,8 @@ load_env_file() {
 
   local line key value
   while IFS= read -r line || [[ -n "$line" ]]; do
+    # Tolerate a .env saved with Windows (CRLF) line endings.
+    line="${line%$'\r'}"
     [[ "$line" =~ ^[[:space:]]*($|#) ]] && continue
     [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
     key="${BASH_REMATCH[2]}"
@@ -130,7 +170,12 @@ load_env_file() {
       value="${BASH_REMATCH[1]}"
     fi
 
-    [[ -z "${!key:-}" ]] && export "$key=$value"
+    # Not `[[ ... ]] && export`: as the loop's last command, a false test
+    # would make this function return 1, which `set -e` turns into a silent
+    # exit whenever the last key in .env is already set in the environment.
+    if [[ -z "${!key:-}" ]]; then
+      export "$key=$value"
+    fi
   done < "$env_file"
 }
 
@@ -183,22 +228,21 @@ install_base_packages() {
   case "$OS_FAMILY" in
     macos)
       install_homebrew
-      log "Installing Git and Git LFS (brew packages: git, git-lfs)"
-      brew install git git-lfs
+      log "Installing Git (brew package: git)"
+      brew install git
       ;;
     fedora)
       log "Installing base packages"
-      "${SUDO[@]}" dnf install -y unzip git-all git-lfs
+      as_root dnf install -y unzip git
       ;;
     ubuntu)
       log "Updating apt package lists"
-      export DEBIAN_FRONTEND=noninteractive
-      "${SUDO[@]}" apt-get update
+      apt_get update
       log "Installing base packages"
-      "${SUDO[@]}" apt-get install -y ca-certificates curl gnupg lsb-release unzip git git-lfs
+      apt_get install -y ca-certificates curl gnupg unzip git
       ;;
     *)
-      die "Don't know how to install prerequisites on this OS. See docs/install-macos.md, docs/install-linux.md, or docs/install-windows.md for manual install instructions, or install aws, docker, git, and git-lfs yourself and re-run with --download --perm --deploy."
+      die "Don't know how to install prerequisites on this OS. See docs/install-macos.md, docs/install-linux.md, or docs/install-windows.md for manual install instructions, or install aws, docker (with the Compose plugin), and git yourself and re-run with --download --perm --deploy."
       ;;
   esac
 }
@@ -207,12 +251,14 @@ install_aws_cli_linux() {
   log "Installing AWS CLI v2"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  # $tmp_dir is intentionally expanded now, not at trap-fire time.
+  # $tmp_dir is intentionally expanded now, not at trap-fire time. A RETURN
+  # trap outlives the function that set it (it fires again when the caller
+  # returns), so it also clears itself.
   # shellcheck disable=SC2064
-  trap "rm -rf '$tmp_dir'" RETURN
+  trap "rm -rf '$tmp_dir'; trap - RETURN" RETURN
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "$tmp_dir/awscliv2.zip"
   unzip -q "$tmp_dir/awscliv2.zip" -d "$tmp_dir"
-  "${SUDO[@]}" "$tmp_dir/aws/install"
+  as_root "$tmp_dir/aws/install"
 }
 
 install_aws_cli() {
@@ -236,46 +282,92 @@ install_aws_cli() {
 add_current_user_to_docker_group() {
   local target_user="${SUDO_USER:-$(id -un)}"
   if ! id -nG "$target_user" | grep -qw docker; then
-    "${SUDO[@]}" usermod -aG docker "$target_user"
+    as_root usermod -aG docker "$target_user"
     warn "Added $target_user to the docker group -- log out/in (or run 'newgrp docker') to run docker without sudo outside this script."
   fi
 }
 
-install_docker_linux_apt() {
-  log "Removing old/conflicting Docker packages (if any)"
-  "${SUDO[@]}" apt-get remove -y docker docker-engine docker.io containerd runc || true
+# Prints "<distro> <suite>" for Docker's apt repository. Ubuntu and its
+# derivatives (Pop!_OS, Linux Mint, ...) use Docker's ubuntu repo with the
+# Ubuntu base's codename -- a derivative's own codename (Mint's "wilma") isn't
+# one Docker publishes. Debian and its derivatives use the debian repo.
+docker_apt_repo() (
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  if [[ -n "${UBUNTU_CODENAME:-}" ]]; then
+    echo "ubuntu $UBUNTU_CODENAME"
+  else
+    echo "debian ${DEBIAN_CODENAME:-${VERSION_CODENAME:?/etc/os-release has no VERSION_CODENAME}}"
+  fi
+)
 
-  log "Adding Docker's official apt repository"
-  "${SUDO[@]}" mkdir -m 0755 -p /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg |
-    "${SUDO[@]}" gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-  "${SUDO[@]}" chmod a+r /etc/apt/keyrings/docker.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" |
-    "${SUDO[@]}" tee /etc/apt/sources.list.d/docker.list >/dev/null
+install_docker_linux_apt() {
+  local repo distro suite
+  repo="$(docker_apt_repo)"
+  read -r distro suite <<<"$repo"
+
+  log "Removing old/conflicting Docker packages (if any)"
+  apt_get remove -y docker docker-engine docker.io containerd runc || true
+
+  log "Adding Docker's official apt repository (linux/$distro $suite)"
+  as_root mkdir -m 0755 -p /etc/apt/keyrings
+  curl -fsSL "https://download.docker.com/linux/$distro/gpg" |
+    as_root gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+  as_root chmod a+r /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro $suite stable" |
+    as_root tee /etc/apt/sources.list.d/docker.list >/dev/null
 
   log "Installing Docker Engine and the Compose plugin"
-  "${SUDO[@]}" apt-get update
-  "${SUDO[@]}" apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  apt_get update
+  apt_get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
   log "Enabling the Docker service"
-  "${SUDO[@]}" systemctl enable --now docker
+  as_root systemctl enable --now docker
 }
 
+# Prints which of Docker's rpm repositories fits this host: fedora or rhel
+# for those distros themselves, centos for the RHEL rebuilds (CentOS Stream,
+# Rocky Linux, AlmaLinux, ...), and fedora for anything else Fedora-like.
+docker_dnf_repo_distro() (
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  case "${ID:-}" in
+    fedora|rhel) echo "$ID" ;;
+    *)
+      case " ${ID_LIKE:-} " in
+        *" rhel "*|*" centos "*) echo "centos" ;;
+        *) echo "fedora" ;;
+      esac
+      ;;
+  esac
+)
+
 install_docker_linux_dnf() {
+  local distro repo_url
+  distro="$(docker_dnf_repo_distro)"
+  repo_url="https://download.docker.com/linux/$distro/docker-ce.repo"
+
   log "Removing old/conflicting Docker packages (if any)"
-  "${SUDO[@]}" dnf remove -y docker docker-client docker-client-latest docker-common \
+  as_root dnf remove -y docker docker-client docker-client-latest docker-common \
     docker-latest docker-latest-logrotate docker-logrotate docker-selinux \
     docker-engine-selinux docker-engine || true
 
-  log "Adding Docker's official dnf repository"
-  "${SUDO[@]}" dnf -y install dnf-plugins-core
-  "${SUDO[@]}" dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+  log "Adding Docker's official dnf repository (linux/$distro)"
+  # dnf5 (the default dnf from Fedora 41) replaced config-manager's
+  # --add-repo with `addrepo --from-repofile`.
+  if command -v dnf5 >/dev/null 2>&1; then
+    as_root dnf5 -y install dnf5-plugins
+    as_root dnf5 config-manager addrepo --overwrite --from-repofile="$repo_url"
+  else
+    as_root dnf -y install dnf-plugins-core
+    as_root dnf config-manager --add-repo "$repo_url"
+  fi
 
   log "Installing Docker Engine and the Compose plugin"
-  "${SUDO[@]}" dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  as_root dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
   log "Enabling the Docker service"
-  "${SUDO[@]}" systemctl enable --now docker
+  as_root systemctl enable --now docker
 }
 
 # Docker Desktop's first launch after install may need a one-time,
@@ -332,25 +424,46 @@ install_docker() {
   esac
 }
 
+# Makes sure the Docker engine answers before any compose call. --init only
+# starts it right after installing it, so a host whose prerequisites were
+# already present may still have it stopped -- Docker Desktop not launched
+# yet, or dockerd not enabled at boot.
+ensure_docker_running() {
+  command -v docker >/dev/null 2>&1 ||
+    die "docker is not installed -- run ./deploy.sh --init first (or install Docker and its Compose plugin yourself)."
+  if as_root docker info >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ "$OS_FAMILY" == "macos" ]]; then
+    start_docker_desktop_and_wait_macos
+    return
+  fi
+
+  if [[ -d /run/systemd/system ]]; then
+    log "Starting the Docker service"
+    as_root systemctl enable --now docker || true
+  fi
+  as_root docker info >/dev/null 2>&1 ||
+    die "The Docker engine isn't running and couldn't be started automatically. Start it (e.g. 'sudo systemctl start docker', or Docker Desktop with WSL integration when running under WSL2), then re-run."
+}
+
 prereqs_installed() {
   command -v aws >/dev/null 2>&1 &&
     command -v docker >/dev/null 2>&1 &&
     docker compose version >/dev/null 2>&1 &&
-    command -v git >/dev/null 2>&1 &&
-    command -v git-lfs >/dev/null 2>&1
+    command -v git >/dev/null 2>&1
 }
 
 install_prereqs() {
   if prereqs_installed; then
-    log "All prerequisites already installed (aws, docker, docker compose, git, git-lfs); skipping setup"
+    log "All prerequisites already installed (aws, docker, docker compose, git); skipping setup"
     return
   fi
 
   install_base_packages
   install_aws_cli
   install_docker
-
-  "${SUDO[@]}" git lfs install --system
 }
 
 # ---------------------------------------------------------------------------
@@ -468,6 +581,7 @@ fetch_mbtiles() {
 
   log "Downloading $filename from $remote_uri"
   aws s3 cp "$remote_uri" "$dest"
+  DATA_UPDATED=1
 }
 
 download_mbtiles() {
@@ -506,44 +620,125 @@ fix_permissions() {
     return
   fi
 
-  "${SUDO[@]}" chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
-  "${SUDO[@]}" chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks nginx/cache nginx/logs nginx/run
+  as_root chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
+  as_root chmod -R 775 mapproxy/data mapproxy/locks mapproxy/tile_locks
+  # nginx's master process runs as root and creates (and chowns) whatever it
+  # needs inside these itself, so only the top level matters -- recursing
+  # into nginx/cache would walk every cached tile on every run.
+  as_root chmod 775 nginx/cache nginx/logs nginx/run
 }
 
 # ---------------------------------------------------------------------------
 # Deploy
 # ---------------------------------------------------------------------------
 
-# Prints the base compose file path -- docker-compose.4087.yaml with --4087,
-# else docker-compose.yaml. docker-compose.override.yaml (nginx) layers on
-# top of either one identically, since both declare the same service names.
-base_compose_file() {
-  if [[ "$USE_4087" -eq 1 ]]; then
-    echo "$SCRIPT_DIR/docker-compose.4087.yaml"
-  else
-    echo "$SCRIPT_DIR/docker-compose.yaml"
+# `docker compose` with this run's -f list (COMPOSE_FILES, set in "Main"),
+# as root where needed.
+compose() {
+  as_root docker compose "${COMPOSE_FILES[@]}" "$@"
+}
+
+# The `docker compose ...` prefix to show in the hints printed at the end:
+# bare for the default stack (Compose auto-discovers docker-compose.yaml +
+# docker-compose.override.yaml by itself), else with this run's -f list.
+compose_hint() {
+  if [[ "$USE_4087" -eq 0 && "$WITH_NGINX" -eq 1 ]]; then
+    echo "docker compose"
+    return
+  fi
+  local name hint="docker compose"
+  for name in "${COMPOSE_FILE_NAMES[@]}"; do
+    hint="$hint -f $name"
+  done
+  echo "$hint"
+}
+
+# Prints the host port Compose published for service $1's container port $2,
+# or $3 when that can't be read (e.g. the service isn't running). Asking
+# Compose beats echoing $NGINX_PORT etc.: under sudo, Compose never sees a
+# value exported in this shell, only .env's.
+published_port() {
+  local port
+  port="$(compose port "$1" "$2" 2>/dev/null | sed -n '1s/.*://p')" || true
+  echo "${port:-$3}"
+}
+
+# nginx caches tiles for 30 days (see nginx/config/nginx.conf) and can't tell
+# when the MBTiles or styles behind them change, and tileservergl only reads
+# both at startup. So after either changes, this recreates whichever
+# tileserver containers are running and empties nginx's tile cache,
+# restarting nginx around the purge if it's running. Services that aren't
+# running are left for --deploy (or you) to start with the new data.
+refresh_stack() {
+  local running="" svc nginx_running=0 did_something=0
+  local recreate=()
+
+  # With the engine stopped nothing can be running, and only the on-disk
+  # nginx cache below needs clearing.
+  if as_root docker info >/dev/null 2>&1; then
+    running="$(compose ps --status running --services 2>/dev/null || true)"
+  fi
+
+  for svc in "${TILESERVER_SERVICES[@]}"; do
+    if grep -qx "$svc" <<<"$running"; then
+      recreate+=("$svc")
+    fi
+  done
+  if [[ ${#recreate[@]} -gt 0 ]]; then
+    log "Recreating ${recreate[*]} to load the new data"
+    compose up -d --no-deps --force-recreate --wait --wait-timeout 600 "${recreate[@]}" ||
+      die "${recreate[*]} did not become healthy again -- see '$(compose_hint) logs ${recreate[*]}'."
+    did_something=1
+  fi
+
+  if [[ "$WITH_NGINX" -eq 1 ]] && grep -qx nginx <<<"$running"; then
+    nginx_running=1
+    # Stopped while its cache is emptied; the restart also makes it
+    # re-resolve the recreated tileserver containers' addresses.
+    compose stop nginx
+  fi
+
+  local cache_dir="$SCRIPT_DIR/nginx/cache/tile_cache"
+  if [[ -d "$cache_dir" ]]; then
+    log "Purging the nginx tile cache ($cache_dir)"
+    as_root find "$cache_dir" -mindepth 1 -delete
+    did_something=1
+  fi
+
+  if [[ "$nginx_running" -eq 1 ]]; then
+    log "Restarting nginx"
+    compose up -d --no-deps --wait --wait-timeout 600 nginx ||
+      die "nginx did not become healthy again -- see '$(compose_hint) logs nginx'."
+    did_something=1
+  fi
+
+  if [[ "$did_something" -eq 0 ]]; then
+    log "Nothing to refresh: no tileserver or nginx is running and nginx has no tile cache yet"
   fi
 }
 
 deploy_stack() {
-  local compose_files=(-f "$(base_compose_file)")
-  if [[ "$WITH_NGINX" -eq 1 ]]; then
-    compose_files+=(-f "$SCRIPT_DIR/docker-compose.override.yaml")
-  else
+  if [[ "$WITH_NGINX" -eq 0 ]]; then
     log "Deploying without nginx -- mapproxy and tileservergl publish their own ports directly"
   fi
+  ensure_docker_running
 
   log "Building the mapproxy image"
-  "${SUDO[@]}" docker compose "${compose_files[@]}" build mapproxy
+  compose build mapproxy
 
   log "Pulling remaining images"
-  "${SUDO[@]}" docker compose "${compose_files[@]}" pull --ignore-buildable
+  compose pull --ignore-buildable
 
-  log "Starting the RBT stack"
-  "${SUDO[@]}" docker compose "${compose_files[@]}" up -d
+  # --wait blocks until every service passes its healthcheck, so a service
+  # that can't start fails the deploy here instead of hiding behind "Done.".
+  log "Starting the RBT stack and waiting for it to become healthy"
+  if ! compose up -d --wait --wait-timeout 600; then
+    compose ps || true
+    die "The RBT stack did not become healthy within 10 minutes -- see '$(compose_hint) logs <service>' for the unhealthy service above."
+  fi
 
   log "Current service status"
-  "${SUDO[@]}" docker compose "${compose_files[@]}" ps
+  compose ps
 }
 
 # ---------------------------------------------------------------------------
@@ -555,6 +750,7 @@ load_env_file
 RUN_INIT=0
 RUN_DOWNLOAD=0
 RUN_PERM=0
+RUN_REFRESH=0
 RUN_DEPLOY=0
 STEP_SELECTED=0
 
@@ -576,6 +772,10 @@ for arg in "$@"; do
       RUN_PERM=1
       STEP_SELECTED=1
       ;;
+    --refresh)
+      RUN_REFRESH=1
+      STEP_SELECTED=1
+      ;;
     --deploy)
       RUN_DEPLOY=1
       STEP_SELECTED=1
@@ -595,7 +795,8 @@ for arg in "$@"; do
   esac
 done
 
-# No step flags given -- run the whole thing.
+# No step flags given -- run the whole thing (--refresh is added below only if
+# the download step fetches new data).
 if [[ "$STEP_SELECTED" -eq 0 ]]; then
   RUN_INIT=1
   RUN_DOWNLOAD=1
@@ -608,24 +809,37 @@ OS_FAMILY="$(detect_os)"
 if [[ "$OS_FAMILY" == "macos" ]]; then
   # Homebrew and Docker Desktop both install and run as the normal user;
   # nothing in the macOS code paths below needs (or should use) sudo.
-  SUDO=()
+  NEED_SUDO=0
 elif [[ $EUID -eq 0 ]]; then
-  SUDO=()
+  NEED_SUDO=0
 else
   command -v sudo >/dev/null 2>&1 || die "This script needs root privileges for some steps. Install sudo or run as root."
-  SUDO=(sudo)
+  NEED_SUDO=1
 fi
 
 if [[ "$OS_FAMILY" == "unknown" ]]; then
-  warn "Could not identify this host as macOS, Ubuntu/Debian, or Fedora/RHEL. --init will stop with an error if it doesn't know how to install prerequisites here; --download, --perm, and --deploy should still work as long as aws, docker, git, and git-lfs are already installed."
+  warn "Could not identify this host as macOS, Ubuntu/Debian, or Fedora/RHEL. --init will stop with an error if it doesn't know how to install prerequisites here; --download, --perm, --refresh, and --deploy should still work as long as aws, docker (with the Compose plugin), and git are already installed."
 fi
 
-[[ -f "$SCRIPT_DIR/docker-compose.yaml" ]] ||
-  die "docker-compose.yaml not found next to this script -- run it from inside the rbt-local repo checkout."
+# The compose files (and tileserver services) this run's stack is made of --
+# docker-compose.override.yaml (nginx) layers on top of either base file
+# identically, since both declare the same service names.
 if [[ "$USE_4087" -eq 1 ]]; then
-  [[ -f "$SCRIPT_DIR/docker-compose.4087.yaml" ]] ||
-    die "docker-compose.4087.yaml not found next to this script -- run it from inside the rbt-local repo checkout."
+  COMPOSE_FILE_NAMES=(docker-compose.4087.yaml)
+  TILESERVER_SERVICES=(tileservergl tileservergl4087)
+else
+  COMPOSE_FILE_NAMES=(docker-compose.yaml)
+  TILESERVER_SERVICES=(tileservergl)
 fi
+if [[ "$WITH_NGINX" -eq 1 ]]; then
+  COMPOSE_FILE_NAMES+=(docker-compose.override.yaml)
+fi
+COMPOSE_FILES=()
+for name in "${COMPOSE_FILE_NAMES[@]}"; do
+  [[ -f "$SCRIPT_DIR/$name" ]] ||
+    die "$name not found next to this script -- run it from inside the rbt-local repo checkout."
+  COMPOSE_FILES+=(-f "$SCRIPT_DIR/$name")
+done
 
 if [[ "$RUN_DOWNLOAD" -eq 1 ]]; then
   : "${S3_BUCKET_RBT:?Set S3_BUCKET_RBT to the bucket (and optional prefix) containing RBT.mbtiles, e.g. S3_BUCKET_RBT=my-bucket -- or add it to .env (see .env.example)}"
@@ -641,34 +855,37 @@ if [[ "$RUN_INIT" -eq 1 ]]; then
 fi
 if [[ "$RUN_DOWNLOAD" -eq 1 ]]; then
   download_mbtiles
+  if [[ "$DATA_UPDATED" -eq 1 ]]; then
+    RUN_REFRESH=1
+  fi
 fi
 if [[ "$RUN_PERM" -eq 1 ]]; then
   fix_permissions
+fi
+if [[ "$RUN_REFRESH" -eq 1 ]]; then
+  refresh_stack
 fi
 if [[ "$RUN_DEPLOY" -eq 1 ]]; then
   deploy_stack
 fi
 
 log "Done."
-if [[ "$RUN_DEPLOY" -eq 1 && "$WITH_NGINX" -eq 0 ]]; then
-  base_file="$(base_compose_file)"
-  echo "  Logs:      docker compose -f $base_file logs -f"
-  echo "  MapProxy:  curl -fsS http://localhost:\${MAPPROXY_PORT:-8081}/wmts/1.0.0/WMTSCapabilities.xml"
-  echo "  Tiles:     curl -fsS http://localhost:\${TILESERVER_PORT:-8080}/"
-  if [[ "$USE_4087" -eq 1 ]]; then
-    echo "  Tiles (4087): curl -fsS http://localhost:\${TILESERVER_4087_PORT:-8083}/"
+if [[ "$RUN_DEPLOY" -eq 1 ]]; then
+  compose_cmd="$(compose_hint)"
+  echo "  Logs:     $compose_cmd logs -f"
+  if [[ "$WITH_NGINX" -eq 1 ]]; then
+    nginx_port="$(published_port nginx 8082 "${NGINX_PORT:-8082}")"
+    echo "  Health:   curl -fsS http://localhost:$nginx_port/healthz"
+    echo "  WMTS:     http://localhost:$nginx_port/mapproxy/wmts/1.0.0/WMTSCapabilities.xml"
+    if [[ "$USE_4087" -eq 1 ]]; then
+      echo "  Tiles (4087): curl -fsS http://localhost:$nginx_port/tileservergl4087/"
+    fi
+  else
+    echo "  MapProxy: curl -fsS http://localhost:$(published_port mapproxy 5000 "${MAPPROXY_PORT:-8081}")/wmts/1.0.0/WMTSCapabilities.xml"
+    echo "  Tiles:    curl -fsS http://localhost:$(published_port tileservergl 8080 "${TILESERVER_PORT:-8080}")/"
+    if [[ "$USE_4087" -eq 1 ]]; then
+      echo "  Tiles (4087): curl -fsS http://localhost:$(published_port tileservergl4087 8080 "${TILESERVER_4087_PORT:-8083}")/"
+    fi
   fi
-  echo "  Stop:      docker compose -f $base_file down --remove-orphans"
-elif [[ "$RUN_DEPLOY" -eq 1 && "$USE_4087" -eq 1 ]]; then
-  # docker compose only auto-discovers docker-compose.yaml/.override.yaml,
-  # not docker-compose.4087.yaml, so -f must stay explicit here.
-  base_file="$(base_compose_file)"
-  echo "  Logs:   docker compose -f $base_file -f docker-compose.override.yaml logs -f"
-  echo "  Health: curl -fsS http://localhost:\${NGINX_PORT:-8082}/healthz"
-  echo "  Tiles (4087): curl -fsS http://localhost:\${NGINX_PORT:-8082}/tileservergl4087/"
-  echo "  Stop:   docker compose -f $base_file -f docker-compose.override.yaml down --remove-orphans"
-elif [[ "$RUN_DEPLOY" -eq 1 ]]; then
-  echo "  Logs:   docker compose logs -f"
-  echo "  Health: curl -fsS http://localhost:\${NGINX_PORT:-8082}/healthz"
-  echo "  Stop:   docker compose down --remove-orphans"
+  echo "  Stop:     $compose_cmd down --remove-orphans"
 fi
