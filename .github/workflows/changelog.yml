@@ -4,6 +4,10 @@
 # GITHUB_TOKEN, which starts no workflows, so this one does not loop. The
 # commit carries no [skip ci]: a release tag usually lands on it, and that
 # marker would stop the tag's run.
+# Run it by hand (Actions > Changelog > Run workflow) to catch up after a
+# push whose runs GitHub skipped, or after a failed run. A dispatched run
+# passes the job's guard: it has no head commit, and its actor is whoever
+# started it.
 
 name: Changelog
 
@@ -11,6 +15,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  workflow_dispatch:
 
 concurrency:
   group: changelog
