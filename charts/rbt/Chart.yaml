@@ -8,7 +8,7 @@ description: >-
   (see the repo root's docs/deployment-4087.md and
   docs/advanced-deployment.md).
 type: application
-version: 0.3.0
+version: 0.4.0
 appVersion: "4087"
 keywords:
   - mapproxy

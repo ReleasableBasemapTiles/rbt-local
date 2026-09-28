@@ -120,11 +120,16 @@ tileservers:
     shm:
       sizeLimit: 2Gi
     persistence:
-      # Ask the RBT team for current RBT.mbtiles/TERRAIN.mbtiles sizes (see
-      # the main README's "Get the Map Data" section) and size this
-      # accordingly -- the datasets are updated periodically, so this
-      # default is a starting point, not a measured figure.
-      size: 200Gi
+      # Sized for the peak during a re-download, not just the data at rest:
+      # `aws s3 cp` writes the new RBT.mbtiles next to the old one before
+      # renaming it into place, so allow 2 x RBT.mbtiles + TERRAIN.mbtiles
+      # (fonts/ and styles/ add ~0.1 GiB) plus room to grow. As of
+      # 2026-09-28 that's 157.7 + 157.7 + 103.5 = ~419 GiB, which 500Gi
+      # covers with ~80 GiB to spare. The datasets are updated periodically
+      # -- the main README's "Get the Map Data" section lists current sizes.
+      # Raising this on an existing release resizes its PVC, which needs a
+      # StorageClass with allowVolumeExpansion (see charts/rbt/README.md).
+      size: 500Gi
       storageClassName: ""
       accessModes:
         - ReadWriteOnce
@@ -163,7 +168,10 @@ tileservers:
     shm:
       sizeLimit: 2Gi
     persistence:
-      size: 200Gi
+      # Same sizing rule as epsg3857's: as of 2026-09-28, 2 x 140.9 GiB
+      # RBT.mbtiles + 75.8 GiB TERRAIN.mbtiles = ~358 GiB at peak, which
+      # 450Gi covers with ~90 GiB to spare.
+      size: 450Gi
       storageClassName: ""
       accessModes:
         - ReadWriteOnce
