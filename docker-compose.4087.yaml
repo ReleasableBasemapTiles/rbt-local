@@ -38,6 +38,7 @@ services:
     environment:
       - UWSGI_PROCESSES=${UWSGI_PROCESSES:-8}
       - UWSGI_THREADS=${UWSGI_THREADS:-4}
+      - UWSGI_CHEAPER=${UWSGI_CHEAPER:-4}
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${MAPPROXY_PORT:-8081}:5000"
     volumes:
@@ -62,7 +63,9 @@ services:
     networks:
       - rbt-network
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000"]
+      # MapProxy's start page only answers 200 once a uWSGI worker has loaded
+      # the config; a TCP connect would pass as soon as the master listens.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 5

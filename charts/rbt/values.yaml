@@ -57,6 +57,9 @@ mapproxy:
   uwsgi:
     processes: 8
     threads: 4
+    # Workers kept running when idle (more start under load, up to
+    # `processes`). Must be lower than `processes`; 0 keeps all running.
+    cheaper: 4
   # emptyDir-backed /dev/shm -- matches docker-compose.4087.yaml's
   # `shm_size: ${MAPPROXY_SHM_SIZE:-2gb}`.
   shm:

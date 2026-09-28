@@ -40,6 +40,8 @@ spec:
               value: {{ .Values.mapproxy.uwsgi.processes | quote }}
             - name: UWSGI_THREADS
               value: {{ .Values.mapproxy.uwsgi.threads | quote }}
+            - name: UWSGI_CHEAPER
+              value: {{ .Values.mapproxy.uwsgi.cheaper | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.mapproxy.containerPort }}
