@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Publish the guides on GitHub Pages (#16)
+- Publish the guides on GitHub Pages ([#16](https://github.com/ReleasableBasemapTiles/rbt-local/pull/16))
+- Add a release notes page to the docs site ([#20](https://github.com/ReleasableBasemapTiles/rbt-local/pull/20))
+- Bump the github-actions group with 6 updates ([#19](https://github.com/ReleasableBasemapTiles/rbt-local/pull/19))
 
 ### Fixed
 
-- Load heading slugs from a hook file (#17)
-- Review fixes across deploy scripts, nginx, mapproxy, tileserver, chart, ci and docs (#18)
+- Load heading slugs from a hook file ([#17](https://github.com/ReleasableBasemapTiles/rbt-local/pull/17))
+- Review fixes across deploy scripts, nginx, mapproxy, tileserver, chart, ci and docs ([#18](https://github.com/ReleasableBasemapTiles/rbt-local/pull/18))
 
 ## [2.0.1] - 2026-09-22
 
@@ -22,11 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update README to include release history and contribution guidelines
 - Sync matching styles from upstream
-- Sync matching styles from upstream (#15)
+- Sync matching styles from upstream ([#15](https://github.com/ReleasableBasemapTiles/rbt-local/pull/15))
 
 ### Fixed
 
-- Read style.json on the Actions Python (#14)
+- Read style.json on the Actions Python ([#14](https://github.com/ReleasableBasemapTiles/rbt-local/pull/14))
 
 ## [2.0.0] - 2026-09-17
 
