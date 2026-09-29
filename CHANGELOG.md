@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Let the changelog workflow run by hand ([#21](https://github.com/ReleasableBasemapTiles/rbt-local/pull/21))
 - Explain the public-mirror download and drop the credentials request
 - [**breaking**] Remove the Helm chart, which now lives in its own repo
+- Match the install guides' chmod to deploy.sh
 
 ### Fixed
 
