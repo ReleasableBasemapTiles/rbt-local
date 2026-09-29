@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explain the public-mirror download and drop the credentials request
 - [**breaking**] Remove the Helm chart, which now lives in its own repo
 - Match the install guides' chmod to deploy.sh
+- Add CLAUDE.md and CONTEXT.md
 
 ### Fixed
 
