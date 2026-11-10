@@ -3,10 +3,12 @@
 # style.json URLs for local mbtiles serving. Opens a pull request when
 # anything changed.
 #
-# styles is private, so GITHUB_TOKEN cannot read it. Add a repo secret
-# named STYLES_REPO_TOKEN: a fine-grained PAT with Contents: Read on
-# ReleasableBasemapTiles/styles only. The pull request uses GITHUB_TOKEN,
-# so other Actions (including Lint PR) do not run on it.
+# styles is private, so GITHUB_TOKEN cannot read it. The checkout uses a
+# read-only deploy key on ReleasableBasemapTiles/styles, with its private
+# half in the repo secret STYLES_DEPLOY_KEY. A deploy key doesn't expire and
+# isn't tied to a person; the fine-grained PAT used before expired, and every
+# run failed from 2026-10-26. The pull request uses
+# GITHUB_TOKEN, so other Actions (including Lint PR) do not run on it.
 #
 #   gh workflow run sync-styles.yml
 
@@ -38,7 +40,7 @@ jobs:
           repository: ReleasableBasemapTiles/styles
           ref: main
           path: upstream-styles
-          token: ${{ secrets.STYLES_REPO_TOKEN }}
+          ssh-key: ${{ secrets.STYLES_DEPLOY_KEY }}
           persist-credentials: false
           fetch-depth: 1
           sparse-checkout: |
