@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Read the styles repo with a deploy key instead of a PAT
+- Sync matching styles from upstream
 
 ## [3.0.0] - 2026-09-29
 
