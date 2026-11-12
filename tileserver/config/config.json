@@ -9,7 +9,8 @@
       "serveAllFonts": true,
       "maxScaleFactor": 2,
       "minRendererPoolSizes": [4, 2],
-      "maxRendererPoolSizes": [16, 8]
+      "maxRendererPoolSizes": [16, 8],
+      "tileMargin": 256
     },
     "data": {
       "TERRAIN": {
