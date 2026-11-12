@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Read the styles repo with a deploy key instead of a PAT
 - Sync matching styles from upstream
+- Bump mambaorg/micromamba ([#28](https://github.com/ReleasableBasemapTiles/rbt-local/pull/28))
+- Bump nginx from 1.30-alpine to 1.31-alpine ([#26](https://github.com/ReleasableBasemapTiles/rbt-local/pull/26))
 
 ## [3.0.0] - 2026-09-29
 
