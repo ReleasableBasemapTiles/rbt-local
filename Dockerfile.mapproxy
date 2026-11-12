@@ -6,7 +6,7 @@
 # Build from the repo root:
 #   docker build -f Dockerfile.mapproxy -t rbt-mapproxy:8.1.0 .
 
-FROM mambaorg/micromamba:2.9.0-debian12-slim
+FROM mambaorg/micromamba:2.10.0-debian12-slim
 
 ARG NEW_MAMBA_USER=mapproxy
 ARG NEW_MAMBA_USER_ID=1000
