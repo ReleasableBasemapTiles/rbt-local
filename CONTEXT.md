@@ -17,7 +17,7 @@ Releasable Basemap Tiles (RBT) lets U.S. services and international coalition pa
 
 - **ReleasableBasemapTiles/styles** (private) is the source of the six styles. A weekly workflow opens a pull request that syncs `tileserver/styles/` from it.
 - **ReleasableBasemapTiles/charts** holds the Helm charts for Kubernetes/OpenShift. They deploy the MapProxy image this repo publishes; this repo covers Docker only.
-- **The MapProxy image** is built from `Dockerfile.mapproxy` and published as `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy` (`7.0.0` and `latest` from `main`).
+- **The MapProxy image** is built from `Dockerfile.mapproxy` and published as `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy` (`8.1.0` and `latest` from `main`).
 - **The public mirror** is a read-only, S3-compatible (RustFS) endpoint that the deploy scripts download the MBTiles from, anonymously.
 - **The docs site**, https://releasablebasemaptiles.github.io/rbt-local/, is built from README, `docs/` and `CHANGELOG.md`.
 
@@ -126,7 +126,7 @@ One stage of the deploy scripts, always run in this order: Init, Download, Perm 
 The path nginx routes on and strips (`/mapproxy`, `/tileservergl`, `/tileservergl4087`), then passes back to the backend so the URLs it generates keep it. A request to a service's own port uses its native, unprefixed paths.
 
 **MapProxy Image**:
-The custom image built from `Dockerfile.mapproxy`: `rbt-mapproxy:7.0.0` locally, `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy` when published. `7.0.0` is MapProxy's version.
+The custom image built from `Dockerfile.mapproxy`: `rbt-mapproxy:8.1.0` locally, `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy` when published. `8.1.0` is MapProxy's version.
 
 **Release**:
 A `v*` tag of this repository (Semantic Versioning), recorded in `CHANGELOG.md` and versioned independently of the MapProxy Image.
@@ -156,5 +156,5 @@ A `v*` tag of this repository (Semantic Versioning), recorded in `CHANGELOG.md` 
 - "default" was used for the **Default Deployment** and for the default values in `.env.example`.
 - "RBT" was used for the program, for `RBT.mbtiles` (the **Vector Map**), and for the `RBT` data key in `config.json`.
 - A Style's name (RBT-LIGHT: its directory, `config.json` key and URLs) differs from its `style.json` id (RBT-CANVAS-LIGHT). Only the name is used.
-- "7.0.0" is MapProxy's version and the MapProxy Image's tag, never a **Release** of this repository.
+- "8.1.0" is MapProxy's version and the MapProxy Image's tag, never a **Release** of this repository.
 - `--perm` (`deploy.sh`) and `-Prep` (`deploy.ps1`) sit in the same slot but do different things. Perm creates the runtime directories and, on Linux, hands MapProxy's to uid 1000, the user its container runs as. Prep creates them and converts the config files to LF line endings.

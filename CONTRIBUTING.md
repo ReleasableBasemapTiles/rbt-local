@@ -35,9 +35,9 @@ shellcheck deploy.sh .githooks/commit-msg
 # Every Compose stack (CI checks all four combinations), and nginx.conf in the pinned image
 docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml config --quiet
 docker run --rm --add-host mapproxy:127.0.0.1 --add-host tileservergl:127.0.0.1 \
-  -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.30-alpine nginx -t
+  -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.31-alpine nginx -t
 
-# MapProxy's configs -- needs MapProxy (pip install MapProxy==7.0.0, in a
+# MapProxy's configs -- needs MapProxy (pip install MapProxy==8.1.0, in a
 # virtualenv)
 python3 .github/scripts/check-mapproxy-config.py
 
@@ -58,7 +58,7 @@ Do not edit `CHANGELOG.md` by hand for ordinary work. After merge (or after you 
 
 A squash merge copies the message of every commit on the branch into the commit on `main`. If any of them contains `[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]` or `[actions skip]`, even in passing, GitHub starts none of the workflows for that merge, this one and Pages included. Leave the brackets off when a message has to mention one. If a merge was skipped, run the Changelog workflow from the Actions tab: it updates the file and re-runs Pages.
 
-GitHub Releases are still created by hand (`gh release create`). Repo tags like `v2.0.0` are the changelog versions; they are independent of the MapProxy image tag (`7.0.0`).
+GitHub Releases are still created by hand (`gh release create`). Repo tags like `v2.0.0` are the changelog versions; they are independent of the MapProxy image tag (`8.1.0`).
 
 ## Local commit-msg hook (optional)
 

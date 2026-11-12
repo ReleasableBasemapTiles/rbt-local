@@ -1,6 +1,6 @@
 # WSGI module for use with Apache mod_wsgi or gunicorn
 # Vendored from https://github.com/mapproxy/mapproxy/blob/master/docker/app.py
-# (MapProxy 7.0.0), plus MAPPROXY_CONFIG: the config file to load, default
+# (MapProxy 8.1.0), plus MAPPROXY_CONFIG: the config file to load, default
 # /mapproxy/config/mapproxy.yaml. docker-compose.4087.yaml sets it to
 # mapproxy.4087.yaml; the Helm chart leaves it unset (see
 # charts/rbt/templates/configmap-mapproxy.yaml).

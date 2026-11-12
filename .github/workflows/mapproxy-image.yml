@@ -71,7 +71,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # 7.0.0 is the tag the Helm chart deploys (charts/rbt/values.yaml), so
+      # 8.1.0 is the tag the Helm chart deploys (charts/rbt/values.yaml), so
       # only main moves it; a branch run publishes its branch and sha tags.
       - name: Image metadata
         id: meta
@@ -79,7 +79,7 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=7.0.0,enable={{is_default_branch}}
+            type=raw,value=8.1.0,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
             type=ref,event=branch
