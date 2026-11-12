@@ -21,7 +21,7 @@ x-logging: &logging
 services:
   nginx:
     # Pinned to the stable branch; plain "alpine" tracks nginx mainline.
-    image: nginx:1.30-alpine
+    image: nginx:1.31-alpine
     container_name: nginx
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${NGINX_PORT:-8082}:8082"
