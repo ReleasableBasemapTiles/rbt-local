@@ -35,7 +35,7 @@ shellcheck deploy.sh .githooks/commit-msg
 # Every Compose stack (CI checks all four combinations), and nginx.conf in the pinned image
 docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml config --quiet
 docker run --rm --add-host mapproxy:127.0.0.1 --add-host tileservergl:127.0.0.1 \
-  -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.30-alpine nginx -t
+  -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.31-alpine nginx -t
 
 # MapProxy's configs -- needs MapProxy (pip install MapProxy==8.1.0, in a
 # virtualenv)
