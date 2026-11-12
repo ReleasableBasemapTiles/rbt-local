@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sync matching styles from upstream
 - Bump mambaorg/micromamba ([#28](https://github.com/ReleasableBasemapTiles/rbt-local/pull/28))
 - Bump nginx from 1.30-alpine to 1.31-alpine ([#26](https://github.com/ReleasableBasemapTiles/rbt-local/pull/26))
+- Bump tileserver-gl to v5.7.0 and MapProxy to 8.1.0 ([#32](https://github.com/ReleasableBasemapTiles/rbt-local/pull/32))
 
 ## [3.0.0] - 2026-09-29
 
