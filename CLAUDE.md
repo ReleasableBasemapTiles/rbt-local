@@ -84,9 +84,9 @@ Plain `docker compose` means the default stack, unless `.env` sets `COMPOSE_FILE
   - `--perm` runs sudo chown.
   - A run with no step flag does all of the above. The modifiers `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) are not step flags, so `./deploy.sh --4087` on its own is a full run. Always pair a modifier with a step: `./deploy.sh --4087 --deploy`.
   - `--deploy`, `--refresh` and `docker compose` are fine when the task needs a running stack. On Linux they run through sudo too.
-- **The MapProxy image inputs**: `Dockerfile.mapproxy`, `mapproxy/environment.yml`, `mapproxy/docker/app.py` and `.github/workflows/mapproxy-image.yml`. Merging a change to any of them rebuilds and pushes `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy:7.0.0` and `:latest`, which the charts repo deploys. `environment.yml` isn't fully pinned, so even a comment-only edit ships whatever conda-forge resolves that day. Their stale Helm chart comments are known and were left alone on purpose (commit ef05eb4).
+- **The MapProxy image inputs**: `Dockerfile.mapproxy`, `mapproxy/environment.yml`, `mapproxy/docker/app.py` and `.github/workflows/mapproxy-image.yml`. Merging a change to any of them rebuilds and pushes `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy:8.1.0` and `:latest`, which the charts repo deploys. `environment.yml` isn't fully pinned, so even a comment-only edit ships whatever conda-forge resolves that day. Their stale Helm chart comments are known and were left alone on purpose (commit ef05eb4).
 - **`tileserver/styles/RBT-*/`**: owned by ReleasableBasemapTiles/styles. The weekly Sync styles pull request replaces local edits, so style changes belong upstream.
-- **Anything outward-facing**: pushing, opening pull requests, `v*` tags and GitHub Releases, and `gh workflow run` (dispatching `mapproxy-image.yml` publishes an image -- as `7.0.0` and `latest` when run on `main` -- and `sync-styles.yml` opens a pull request).
+- **Anything outward-facing**: pushing, opening pull requests, `v*` tags and GitHub Releases, and `gh workflow run` (dispatching `mapproxy-image.yml` publishes an image -- as `8.1.0` and `latest` when run on `main` -- and `sync-styles.yml` opens a pull request).
 
 ## Keep in sync
 
@@ -99,7 +99,7 @@ These facts are stated in more than one place. When you change one, grep for the
 | The set of styles | The style directory, `config.json`, `mapproxy.yaml` (a source, three caches, three layers), `mapproxy.4087.yaml` (a 4087 source and cache, and the 4326 cache's source), `sync-styles.yml`'s sparse-checkout list, and every style list or "six styles"/"18 layers" count in README, `gis-clients.md`, `verify.md`, `deployment-4087.md`, `troubleshooting.md` |
 | nginx's cache policy (30 days, 10 GB, what's cached) | `docs/architecture.md` "Tile Caching", `gis-clients.md`, `troubleshooting.md`, README "Requirements" |
 | MapProxy's WMS `srs` list | `docs/architecture.md`, `docs/gis-clients.md` |
-| An image pin | `tileserver-gl` is pinned in both `docker-compose.yaml` and `docker-compose.4087.yaml` (keep them equal). The nginx tag is also in CONTRIBUTING's `nginx -t` line. MapProxy's version is `ARG MAPPROXY_VERSION` in `Dockerfile.mapproxy`, where CI reads it, and it's repeated in the `rbt-mapproxy:7.0.0` image name in `docker-compose.yaml`, the GHCR tag in `mapproxy-image.yml` (which the charts repo deploys), CONTRIBUTING, and the `7.0.0` mentions in this file and CONTEXT.md |
+| An image pin | `tileserver-gl` is pinned in both `docker-compose.yaml` and `docker-compose.4087.yaml` (keep them equal). The nginx tag is also in CONTRIBUTING's `nginx -t` line. MapProxy's version is `ARG MAPPROXY_VERSION` in `Dockerfile.mapproxy`, where CI reads it, and it's repeated in the `rbt-mapproxy:8.1.0` image name in `docker-compose.yaml`, the GHCR tag in `mapproxy-image.yml` (which the charts repo deploys), CONTRIBUTING, and the `8.1.0` mentions in this file and CONTEXT.md |
 | The public mirror | `PUBLIC_S3_*` in `deploy.sh`, `$script:PublicS3*` in `deploy.ps1`, README "Get the Map Data" |
 | TileserverGL's renderer pool sizes | `docs/troubleshooting.md` |
 | Added a docs page | `mkdocs.yml` `nav` -- `mkdocs build --strict` fails otherwise |
@@ -119,7 +119,7 @@ Each of these is explained in a comment where it lives. Keep those comments.
 **MapProxy**
 - Every cache sets `disable_storage: true`. MapProxy stores nothing; nginx is the only tile cache.
 - The EPSG:3395 and EPSG:4326 caches each take the matching EPSG:3857 cache as their source, one reprojection hop; in the 4087 stack, the EPSG:4326 caches take the matching EPSG:4087 cache instead. Don't chain 4326 through 3395.
-- `mapproxy.4087.yaml` merges over `mapproxy.yaml` through `base:`. Mappings merge key by key. Lists named `sources`, `grids`, `bbox`, `tile_size`, `res` or `max_output_pixels` replace the base's, `layers` merge by `name`, an empty list deletes the base's, and every other list is appended. The source of truth is `merge_dict` in MapProxy 7.0.0's `mapproxy/config/loader.py`. Never restate a list such as `services.wms.srs` there; `check-mapproxy-config.py` fails on duplicates.
+- `mapproxy.4087.yaml` merges over `mapproxy.yaml` through `base:`. Mappings merge key by key. Lists named `sources`, `grids`, `bbox`, `tile_size`, `res` or `max_output_pixels` replace the base's, `layers` merge by `name`, an empty list deletes the base's, and every other list is appended. The source of truth is `merge_dict` in MapProxy 8.1.0's `mapproxy/config/loader.py`. Never restate a list such as `services.wms.srs` there; `check-mapproxy-config.py` fails on duplicates.
 - `services.wms.srs` replaces MapProxy's default list, so it repeats the five defaults next to EPSG:3395.
 - Every grid is `origin: nw` (WMTS silently drops the others) with 512px tiles, matching TileserverGL's `/styles/<ID>/512/{z}/{x}/{y}.png` URLs.
 - Only the overlay sources are `transparent: true`.
@@ -161,7 +161,7 @@ Each of these is explained in a comment where it lives. Keep those comments.
 - Pull requests are squash-merged, so the title becomes the changelog line. Fill in the template's Summary and Test plan.
 - Never put `[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]` or `[actions skip]` in a commit message, not even quoted. A squash merge that carries one runs no workflows: no CI, no Pages, no changelog.
 - Don't edit `CHANGELOG.md`. The Changelog workflow regenerates it from the commits.
-- `v*` tags version this repository, independently of the MapProxy image's `7.0.0`. GitHub Releases are made by hand.
+- `v*` tags version this repository, independently of the MapProxy image's `8.1.0`. GitHub Releases are made by hand.
 - `git config core.hooksPath .githooks` turns on the local commit-msg check.
 
 When a term, a sync point or a rule here changes, update this file and CONTEXT.md in the same pull request.

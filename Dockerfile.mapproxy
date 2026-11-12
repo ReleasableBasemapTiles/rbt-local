@@ -1,10 +1,10 @@
 # Custom MapProxy image: Python 3.14 + conda-forge GDAL/PROJ >= 9.8
-# (ellipsoidal EPSG:4087) + MapProxy 7 + uwsgi. Drop-in replacement for
-# ghcr.io/mapproxy/mapproxy/mapproxy:7.0.0-nginx as this stack uses it
+# (ellipsoidal EPSG:4087) + MapProxy 8 + uwsgi. Drop-in replacement for
+# ghcr.io/mapproxy/mapproxy/mapproxy:8.1.0-nginx as this stack uses it
 # (uwsgi directly; the official image's bundled nginx is not installed).
 #
 # Build from the repo root:
-#   docker build -f Dockerfile.mapproxy -t rbt-mapproxy:7.0.0 .
+#   docker build -f Dockerfile.mapproxy -t rbt-mapproxy:8.1.0 .
 
 FROM mambaorg/micromamba:2.9.0-debian12-slim
 
@@ -42,7 +42,7 @@ RUN micromamba install -y -n base -f /tmp/environment.yml && \
     rm /tmp/environment.yml
 
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
-ARG MAPPROXY_VERSION=7.0.0
+ARG MAPPROXY_VERSION=8.1.0
 # --no-deps: MapProxy is not on conda-forge; its PyPI deps include pyproj,
 # whose wheels bundle a private PROJ and would undo the >=9.8 pin above.
 # So pip never installs MapProxy's requirements: `pip check` fails the build

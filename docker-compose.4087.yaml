@@ -38,7 +38,7 @@ services:
   # resolve relative to /config, so this is the only difference needed; the
   # EPSG:4087 RBT.mbtiles/TERRAIN.mbtiles must keep those exact filenames.
   tileservergl4087:
-    image: maptiler/tileserver-gl:v5.7.0-pre.1
+    image: maptiler/tileserver-gl:v5.7.0
     container_name: tileservergl4087
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_4087_PORT:-8083}:8080"
