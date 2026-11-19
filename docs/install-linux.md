@@ -10,9 +10,10 @@ Run the block below that matches your distribution family to install the require
 # Download and install AWS CLI v2 for this machine's architecture
 # (x86_64 or aarch64)
 sudo dnf install unzip -y;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    sudo ./aws/install
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
+    unzip -qo awscliv2.zip && \
+    sudo ./aws/install --update && \
+    rm -rf aws awscliv2.zip
 
 # Remove old Docker versions (if any exist)
 sudo dnf remove docker docker-client \
@@ -50,9 +51,10 @@ sudo systemctl enable --now docker
 sudo apt-get update;
 sudo apt-get install -y unzip ca-certificates curl gnupg;
 sudo update-ca-certificates;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    sudo ./aws/install;
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
+    unzip -qo awscliv2.zip && \
+    sudo ./aws/install --update && \
+    rm -rf aws awscliv2.zip;
 
 # Remove old Docker versions (if any exist)
 sudo apt-get remove docker docker-engine docker.io containerd runc;
@@ -60,9 +62,10 @@ sudo apt-get remove docker docker-engine docker.io containerd runc;
 # Add Docker's official repository: linux/ubuntu (and the Ubuntu release)
 # on Ubuntu and its derivatives, linux/debian on Debian
 DOCKER_DISTRO=$(. /etc/os-release && if [ -n "${UBUNTU_CODENAME:-}" ]; then echo ubuntu; else echo debian; fi);
-DOCKER_SUITE=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}");
+DOCKER_SUITE=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-${DEBIAN_CODENAME:-$VERSION_CODENAME}}");
 sudo mkdir -m 0755 -p /etc/apt/keyrings;
-curl -fsSL "https://download.docker.com/linux/$DOCKER_DISTRO/gpg" | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg;
+# --batch --yes: overwrite the key without asking, so pasting this again works
+curl -fsSL "https://download.docker.com/linux/$DOCKER_DISTRO/gpg" | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg;
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$DOCKER_DISTRO $DOCKER_SUITE stable" \
   | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null;
@@ -105,8 +108,10 @@ sudo chmod 775 nginx/cache
 # Start the RBT stack from the rbt-local directory. Docker needs root:
 # prefix its commands with sudo, as here, or add yourself to the docker
 # group (root-equivalent access) with `sudo usermod -aG docker $USER` and
-# log out and back in.
-sudo docker compose up -d
+# log out and back in. --wait makes it wait until every service passes its
+# health check (TileserverGL can take a few minutes to open the map data), and
+# fail if one doesn't.
+sudo docker compose up -d --wait
 
 # Check logs
 sudo docker compose logs -f

@@ -50,7 +50,7 @@ Pull requests that change `Dockerfile.mapproxy`, `mapproxy/environment.yml` or `
 
 ## Prefer squash merge
 
-Squash-merging uses the **PR title** as the commit on `main`, which is the line git-cliff will publish. If you merge with a merge commit instead, keep every commit on the branch conventional — git-cliff skips `Merge pull request` lines.
+Squash-merging uses the **PR title** as the commit on `main`, which is the line git-cliff will publish. If you merge with a merge commit instead, keep every commit on the branch conventional -- git-cliff skips `Merge pull request` lines.
 
 ## Changelog updates
 

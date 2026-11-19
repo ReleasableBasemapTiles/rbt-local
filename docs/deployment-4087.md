@@ -17,6 +17,13 @@ EPSG:4087 shares EPSG:4326's linear scaling: one degree of latitude or longitude
 - The EPSG:4087 caches are internal only -- MapProxy still publishes the same 18 layers (six styles x EPSG:3857/3395/4326) as the default stack. No client-visible URL changes.
 - The optional nginx service ([docker-compose.override.yaml](../docker-compose.override.yaml)) serves the second container's style previews at `/tileservergl4087/`, alongside the existing `/tileservergl/` and `/mapproxy/` paths. After replacing MBTiles or styles, `./deploy.sh --4087 --refresh` (or `.\deploy.ps1 -Use4087 -Refresh`) restarts both TileserverGL containers and empties nginx's cache.
 
+## What it costs
+
+The sharper EPSG:4326 output isn't free:
+
+- **Memory**: a second TileserverGL container with its own pools of renderers, which roughly doubles TileserverGL's share of the memory the stack uses. The 16GB the README recommends is for the default stack, so leave more headroom, or lower the pool sizes in [`tileserver/config/config.json`](../tileserver/config/config.json) -- both containers share that file (see [TileserverGL Uses Too Much Memory](troubleshooting.md#tileservergl-uses-too-much-memory-or-renders-slowly-under-load)).
+- **Disk**: a second pair of MBTiles files in `tileserver/data/4087/`, next to the pair in `tileserver/data/3857/`. The `aws s3 ls` command under [Get the Map Data](../README.md#get-the-map-data) lists the current sizes of both.
+
 ## Deploying
 
 **With the shortcut scripts** (recommended -- also downloads the EPSG:4087 MBTiles):
@@ -42,10 +49,27 @@ To make plain `docker compose ...` commands use the 4087 stack without the `-f` 
 
 ## Verifying it's working
 
+These examples use the default ports (8081, 8082 and 8083); substitute yours if you changed them in `.env`. The `bash` ones work on macOS, Linux and WSL2; on native Windows PowerShell, use the `powershell` variants (`curl.exe`, because PowerShell 5.1 aliases bare `curl` to a different command).
+
+With nginx (deployment 3):
+
 ```bash
-docker compose -f docker-compose.yaml -f docker-compose.4087.yaml [-f docker-compose.override.yaml] ps   # all services "running"/"healthy"
-curl -fsS http://localhost:${TILESERVER_4087_PORT:-8083}/                                                # tileservergl4087 preview UI
-curl -fsS http://localhost:8082/tileservergl4087/                                                        # same, through nginx
+docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml ps   # all services "running"/"healthy"
+curl -fsS http://localhost:8083/                                                                        # tileservergl4087 preview UI
+curl -fsS http://localhost:8082/tileservergl4087/                                                       # same, through nginx
+```
+
+Without nginx (deployment 4), leave off the last `-f` flag and the nginx check:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.4087.yaml ps
+curl -fsS http://localhost:8083/
+```
+
+```powershell
+docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml ps
+curl.exe -fsS http://localhost:8083/
+curl.exe -fsS http://localhost:8082/tileservergl4087/
 ```
 
 All of the above passing just means the containers are up -- it doesn't confirm MapProxy actually loaded `mapproxy.4087.yaml` rather than the default `mapproxy.yaml` (see [Troubleshooting](troubleshooting.md#the-4087-stack-is-up-but-epsg4326-tiles-look-unchanged)). MapProxy logs each config file it reads at startup:
@@ -56,10 +80,19 @@ docker logs mapproxy 2>&1 | grep -o 'reading: .*' | sort -u
 #         reading: /mapproxy/config/mapproxy.yaml       (the file it builds on)
 ```
 
+```powershell
+docker logs mapproxy 2>&1 | Select-String 'reading: .*' | ForEach-Object { $_.Matches.Value } | Sort-Object -Unique
+```
+
 And to confirm MapProxy is actually querying `tileservergl4087` for EPSG:4326 tiles:
 
 ```bash
-curl -fsS "http://localhost:${MAPPROXY_PORT:-8081}/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o /dev/null
+curl -fsS "http://localhost:8081/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o /dev/null
+docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
+```
+
+```powershell
+curl.exe -fsS "http://localhost:8081/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o NUL
 docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
 ```
 

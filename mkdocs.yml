@@ -7,6 +7,24 @@ docs_dir: site-docs
 
 theme:
   name: material
+  features:
+    # A copy button on every code block: these guides are meant to be pasted
+    # one command at a time.
+    - content.code.copy
+    - navigation.top
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
 # Loaded by path. The mkdocs console script does not put the repo on sys.path,
 # so heading slugs cannot be imported from mkdocs.yml with a Python tag.
@@ -42,6 +60,7 @@ nav:
       - Linux: install-linux.md
       - Windows: install-windows.md
   - Verify: verify.md
+  - Operations: operations.md
   - GIS clients: gis-clients.md
   - Advanced:
       - Without nginx: advanced-deployment.md
