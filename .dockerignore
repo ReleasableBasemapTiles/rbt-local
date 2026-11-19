@@ -1,26 +1,19 @@
-# Used by Dockerfile.mapproxy (context .). tileserver/fonts and
-# tileserver/styles are bind-mounted at Compose runtime, not copied into
-# any image; tileserver/data MBTiles are large enough to stall the upload.
-.git
-.cursor
-**/.DS_Store
-
-tileserver/data
-tileserver/config
-tileserver/fonts
-tileserver/styles
-
-mapproxy/config
-mapproxy/data
-mapproxy/locks
-mapproxy/tile_locks
-
-nginx
-docs
-*.md
-
-deploy.sh
-deploy.ps1
-docker-compose*.yaml
-.env
-.env.example
+# Used by Dockerfile.mapproxy (context .). An allowlist: everything is left
+# out of the build context except the files the Dockerfile COPYs (the two
+# mapproxy/conda-*.lock files, mapproxy/docker/app.py and
+# mapproxy/docker/mesh_guard.py). A list of what to exclude never keeps up
+# with the repository -- site/, site-docs/, images/ and a local .venv/ are
+# all large and were all being sent to the Docker daemon on every build --
+# whereas a new file the image needs fails the build at once with
+# "not found".
+#
+# Add a `!path` line here whenever Dockerfile.mapproxy gets a new COPY.
+# Bind-mounted at Compose runtime, never copied into an image: the MBTiles
+# under tileserver/data (hundreds of GB, which would stall the upload),
+# tileserver/{config,fonts,styles}, mapproxy/{config,data,locks,tile_locks}
+# and nginx.
+*
+!mapproxy/conda-linux-64.lock
+!mapproxy/conda-linux-aarch64.lock
+!mapproxy/docker/app.py
+!mapproxy/docker/mesh_guard.py

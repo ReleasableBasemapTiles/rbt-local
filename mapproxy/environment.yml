@@ -1,6 +1,14 @@
 # conda-forge stack for Dockerfile.mapproxy. Native GIS libs (PROJ/GDAL/GEOS)
 # and pyproj must come from here -- a PyPI pyproj wheel bundles its own PROJ
 # and would undo the >=9.8 pin that fixes ellipsoidal EPSG:4087.
+#
+# This file says what we ask for; it is not what the image installs.
+# Dockerfile.mapproxy installs the exact packages in mapproxy/conda-linux-64.lock
+# and mapproxy/conda-linux-aarch64.lock, so a build doesn't pick up whatever
+# conda-forge released since the last one. After changing the dependencies
+# below, regenerate both with scripts/lock-mapproxy.sh and commit them with
+# this file; CI (check-sync.py) fails if they disagree. Comments and ordering
+# here don't count as a change.
 name: base
 channels:
   - conda-forge

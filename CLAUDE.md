@@ -18,7 +18,8 @@ Request path, with default ports: client -> `nginx` :8082 (optional; the only ti
 | `mapproxy/config/mapproxy.yaml` | 18 layers: 6 styles x EPSG:3857/3395/4326 |
 | `mapproxy/config/mapproxy.4087.yaml` | `base: mapproxy.yaml` plus only the EPSG:4087 differences |
 | `mapproxy/config/uwsgi.ini`, `logging.ini` | uWSGI and logging settings, mounted read-only |
-| `Dockerfile.mapproxy`, `mapproxy/environment.yml`, `mapproxy/docker/app.py` | The custom MapProxy image (see [Ask first](#ask-first)) |
+| `Dockerfile.mapproxy`, `mapproxy/environment.yml`, `mapproxy/conda-linux-{64,aarch64}.lock`, `mapproxy/docker/app.py`, `mapproxy/docker/mesh_guard.py` | The custom MapProxy image: `environment.yml` is what it asks for, the lock files are the exact packages it installs (see [Ask first](#ask-first)) |
+| `scripts/lock-mapproxy.sh` | Regenerates the two lock files from `environment.yml`, in the image's own micromamba |
 | `nginx/config/nginx.conf` | Routing, prefix headers, tile-cache policy |
 | `tileserver/config/config.json` | TileserverGL's data (`RBT`, `TERRAIN`) and style registry |
 | `tileserver/styles/RBT-*/` | The six styles, synced from upstream |
@@ -26,42 +27,37 @@ Request path, with default ports: client -> `nginx` :8082 (optional; the only ti
 | `tileserver/data/{3857,4087}/` | The MBTiles: gitignored, hundreds of GB |
 | `deploy.sh`, `deploy.ps1` | Bootstrap and deploy: macOS/Linux/WSL2, and native Windows 11 |
 | `docs/`, `README.md`, `CHANGELOG.md`, `images/` | The guides. `scripts/prepare_pages.py` copies them into `site-docs/` and `mkdocs` builds `site/` (both gitignored) |
+| `scripts/check.sh`, `.github/scripts/check-*.py` | The checks CI runs, and the same script locally (see [Checks](#checks)) |
 | `.github/` | CI, MapProxy image publishing, Pages, changelog, weekly style sync |
 | `nginx/cache/`, `mapproxy/{data,locks,tile_locks}/` | Runtime bind mounts; git tracks at most a placeholder file in each |
 
 ## Checks
 
-There are no unit tests. These are the checks CI runs ([ci.yml](.github/workflows/ci.yml), [pages.yml](.github/workflows/pages.yml)); [CONTRIBUTING.md](CONTRIBUTING.md) walks contributors through most of them. Run the ones covering what you changed:
+There are no unit tests. [`scripts/check.sh`](scripts/check.sh) runs the checks CI runs ([ci.yml](.github/workflows/ci.yml) and [pages.yml](.github/workflows/pages.yml)), and ci.yml calls it, so a local run and CI can't drift apart. [CONTRIBUTING.md](CONTRIBUTING.md) walks contributors through it. Run the groups covering what you changed:
 
 ```bash
-shellcheck deploy.sh .githooks/commit-msg
-pwsh -NoProfile -Command '$t = $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/deploy.ps1", [ref]$t, [ref]$e); if ($e) { $e | ForEach-Object { "deploy.ps1:$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }'
-
-docker compose -f docker-compose.yaml config --quiet
-docker compose -f docker-compose.yaml -f docker-compose.override.yaml config --quiet
-docker compose -f docker-compose.yaml -f docker-compose.4087.yaml config --quiet
-docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml config --quiet
-
-docker run --rm --add-host mapproxy:127.0.0.1 --add-host tileservergl:127.0.0.1 \
-  -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" \
-  "$(docker compose -f docker-compose.yaml -f docker-compose.override.yaml config --images | grep '^nginx:')" nginx -t
-
-git ls-files '*.json' | ( bad=0; while IFS= read -r f; do python3 -m json.tool "$f" >/dev/null || { echo "bad JSON: $f"; bad=1; }; done; exit $bad )
+scripts/check.sh            # every group
+scripts/check.sh scripts    # ShellCheck on deploy.sh, .githooks/commit-msg, scripts/check.sh, scripts/lock-mapproxy.sh and the smoke script; a parse of deploy.ps1
+scripts/check.sh compose    # the four Compose stacks, and nginx -t in the nginx image the Compose file pins
+scripts/check.sh configs    # tracked JSON; MapProxy's configs load and keep the MapProxy invariants
+scripts/check.sh sync       # the "Keep in sync" facts that can be read from files (check-sync.py)
+scripts/check.sh docs       # prepare_pages.py, then mkdocs build --strict
 ```
 
-The `nginx -t` line reads the image tag from the Compose files, as CI does, so it keeps up with Dependabot's bumps. The JSON check runs in a `( ... )` subshell so its `exit` can't close an interactive zsh.
-
-The MapProxy config check and the docs build need Python packages. Keep the virtualenv outside the repo, as here, or as `.venv/` inside it (gitignored):
+A group runs every check even when one fails, then exits 1. A missing tool is a warning locally and a failure under `CI=true`, so don't read a local "skipped" as a pass. The Python groups use `$PYTHON`, else `~/.venvs/rbt-local/bin/python`, else the repo's `.venv/` (gitignored), else `python3`:
 
 ```bash
 python3 -m venv ~/.venvs/rbt-local
 ~/.venvs/rbt-local/bin/pip install -r requirements-docs.txt "MapProxy==$(sed -n 's/^ARG MAPPROXY_VERSION=//p' Dockerfile.mapproxy)"
-
-~/.venvs/rbt-local/bin/python .github/scripts/check-mapproxy-config.py
-~/.venvs/rbt-local/bin/python scripts/prepare_pages.py && ~/.venvs/rbt-local/bin/mkdocs build --strict
 ```
 
-`docker compose build mapproxy` builds the MapProxy image under the name the Compose file gives it, and runs the Dockerfile's PROJ/EPSG:4087 and WSGI smoke tests. It's slow; CI builds it on pull requests that touch its inputs.
+The checks name what they read. When you rename a Compose service, reword the README "Requirements" line, change how the image workflow tags, or move a file one of them reads, update the check in the same change: `check-sync.py` fails with "can't find ..." rather than skipping.
+
+CI also runs, on machines this script can't be: `deploy.ps1 -Help` under Windows PowerShell 5.1, then PSScriptAnalyzer at Error severity (the `windows` job); `/bin/bash -n deploy.sh` and `/bin/bash deploy.sh --help` under macOS's bash 3.2 (`macos`); and actionlint on the workflows (`docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color`).
+
+The one check that runs the stack is [smoke.yml](.github/workflows/smoke.yml), on pull requests that can change a running stack. It writes fixture MBTiles (`.github/scripts/make-fixture-mbtiles.py`: one empty vector tile and one flat terrain tile, so each style draws only its background), runs `./deploy.sh [--4087] --perm --deploy` and `--check`, then `.github/scripts/smoke-test.sh [--4087]`, which asserts `/healthz`, `styles.json`, the 18 layers, a GetMap `MISS` then `HIT`, the reprojected layers and which TileserverGL rendered them, the relative `/tileservergl` redirect, which MapProxy config loaded, and a `MISS` again after `--refresh`. You can run it locally the same way, since `--deploy` and `--refresh` are fine to run. Never `--perm`, `--download` or `--force`. The fixture writer refuses to overwrite files that aren't its own. Delete the fixtures afterwards (`rm tileserver/data/*/RBT.mbtiles tileserver/data/*/TERRAIN.mbtiles`): the downloader skips a file that is already there (`RBT.mbtiles` unless the mirror's copy is newer, `TERRAIN.mbtiles` always), so a leftover fixture would block `--download` from fetching the real data. Don't `sed -i` or `git checkout` a file that a running container bind-mounts as a single file (`nginx/config/nginx.conf`): the new inode leaves the container with a stale mount and `nginx -s reload` fails; edit it in place or recreate the container with `docker compose up -d --force-recreate nginx`.
+
+`docker compose build mapproxy` builds the MapProxy image under the name the Compose file gives it, and runs the Dockerfile's PROJ/EPSG:4087 and WSGI smoke tests and `mesh_guard.py`'s self-test. It's slow; CI builds it on pull requests that touch its inputs.
 
 ### Running the stack
 
@@ -70,6 +66,7 @@ The stack only becomes healthy with the MBTiles in `tileserver/data/3857/` (and 
 ```bash
 ./deploy.sh --deploy              # build, pull, start, wait for healthy; add --4087 and/or --no-nginx for the other stacks
 ./deploy.sh --refresh             # after editing a style or replacing MBTiles; add the running stack's flags (--4087)
+./deploy.sh --check               # read-only PASS/WARN/FAIL report on the machine and the stack; exits 1 on a FAIL
 docker compose logs -f mapproxy
 docker compose down --remove-orphans
 ```
@@ -84,46 +81,50 @@ Plain `docker compose` means the default stack, unless `.env` sets `COMPOSE_FILE
   - `--perm` runs sudo chown.
   - A run with no step flag does all of the above. The modifiers `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) are not step flags, so `./deploy.sh --4087` on its own is a full run. Always pair a modifier with a step: `./deploy.sh --4087 --deploy`.
   - `--deploy`, `--refresh` and `docker compose` are fine when the task needs a running stack. On Linux they run through sudo too.
-- **The MapProxy image inputs**: `Dockerfile.mapproxy`, `mapproxy/environment.yml`, `mapproxy/docker/app.py` and `.github/workflows/mapproxy-image.yml`. Merging a change to any of them rebuilds and pushes `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy:8.1.0` and `:latest`, which the charts repo deploys. `environment.yml` isn't fully pinned, so even a comment-only edit ships whatever conda-forge resolves that day. Their stale Helm chart comments are known and were left alone on purpose (commit ef05eb4).
+  - `--check`/`-Check` only reads, so it is fine to run whenever it helps (with the stack's flags, such as `--4087`). With `aws` installed it makes anonymous `head-object` requests to the mirror, and with the engine reachable only through sudo on Linux it runs Docker through sudo.
+- **The MapProxy image inputs**: `Dockerfile.mapproxy`, `.dockerignore`, `mapproxy/conda-linux-64.lock`, `mapproxy/conda-linux-aarch64.lock`, `mapproxy/docker/app.py`, `mapproxy/docker/mesh_guard.py` and `.github/workflows/mapproxy-image.yml`. Merging a change to any of them rebuilds and pushes `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy:8.1.0` and `:latest`, which the charts repo deploys, so agree the merge with ReleasableBasemapTiles/charts first. The image installs the lock files' exact conda packages rather than solving `mapproxy/environment.yml` at build time, so it is the same each time it is built. To change a dependency, edit `environment.yml`, run `scripts/lock-mapproxy.sh` and commit both. That is a fresh solve, which moves every package to the newest version the specs allow: read the lock diff, build the image and run the smoke test before you ask. A comment or reordering in `environment.yml` changes nothing that ships, and isn't an image input. Their stale Helm chart comments are known and were left alone on purpose (commit ef05eb4).
 - **`tileserver/styles/RBT-*/`**: owned by ReleasableBasemapTiles/styles. The weekly Sync styles pull request replaces local edits, so style changes belong upstream.
 - **Anything outward-facing**: pushing, opening pull requests, `v*` tags and GitHub Releases, and `gh workflow run` (dispatching `mapproxy-image.yml` publishes an image -- as `8.1.0` and `latest` when run on `main` -- and `sync-styles.yml` opens a pull request).
 
 ## Keep in sync
 
-These facts are stated in more than one place. When you change one, grep for the old value and update the rest.
+These facts are stated in more than one place. When you change one, grep for the old value and update the rest. Rows marked **(checked)** are verified by `scripts/check.sh sync`, so CI fails when the places disagree; the rest are on you.
 
 | If you change | Also update |
 | --- | --- |
 | A `deploy.sh` flag, step or behavior | `deploy.ps1` (`--4087` is `-Use4087`, `--no-nginx` is `-NoNginx`, and `--perm`/`-Prep` are different steps), both usage texts, the manual steps in `docs/install-*.md`, and every other mention in README, `docs/` and config comments (`git grep -n -e --no-nginx -e -NoNginx`, say) |
-| A port, service name or path prefix | The Compose files (ports and healthchecks), `.env.example`, `uwsgi.ini` (port 5000), `nginx.conf`, MapProxy source URLs, both scripts (usage texts, service lists, closing hints), the `--add-host` names in `ci.yml`, CONTRIBUTING and this file, README "Endpoints", and `docs/verify.md`, `gis-clients.md`, `advanced-deployment.md`, `deployment-4087.md`, `troubleshooting.md`, `architecture.md` (diagrams included) |
-| The set of styles | The style directory, `config.json`, `mapproxy.yaml` (a source, three caches, three layers), `mapproxy.4087.yaml` (a 4087 source and cache, and the 4326 cache's source), `sync-styles.yml`'s sparse-checkout list, and every style list or "six styles"/"18 layers" count in README, `gis-clients.md`, `verify.md`, `deployment-4087.md`, `troubleshooting.md` |
-| nginx's cache policy (30 days, 10 GB, what's cached) | `docs/architecture.md` "Tile Caching", `gis-clients.md`, `troubleshooting.md`, README "Requirements" |
+| A port, service name or path prefix | The Compose files (ports and healthchecks), `.env.example`, `uwsgi.ini` (port 5000), `nginx.conf`, MapProxy source URLs, both scripts (usage texts, service lists, closing hints, and `--check`'s port, container and endpoint lists), the `--add-host` names in `scripts/check.sh`, the container names, ports and paths that `.github/scripts/smoke-test.sh` asserts (it only runs against a live stack, so nothing checks them until it runs), README "Endpoints", and `docs/verify.md`, `gis-clients.md`, `advanced-deployment.md`, `deployment-4087.md`, `troubleshooting.md`, `architecture.md` (diagrams included) |
+| The set of styles **(checked)** | The style directory, `config.json`, `mapproxy.yaml` (a source, three caches, three layers), `mapproxy.4087.yaml` (a 4087 source and cache, and the 4326 cache's source), `sync-styles.yml`'s sparse-checkout list, and every style list or "six styles"/"18 layers" count in README, `gis-clients.md`, `verify.md`, `deployment-4087.md`, `troubleshooting.md` |
+| nginx's cache policy (30 days, 10 GB, what's cached) | `docs/architecture.md` "Tile Caching", `gis-clients.md`, `troubleshooting.md`, README "Requirements", and the free-disk reserve `--check` wants (`MIN_FREE_BYTES_WITH_NGINX` in `deploy.sh`, `$script:MinFreeBytesWithNginx` in `deploy.ps1`: the cache size plus the MapProxy image) |
 | MapProxy's WMS `srs` list | `docs/architecture.md`, `docs/gis-clients.md` |
-| An image pin | `tileserver-gl` is pinned in both `docker-compose.yaml` and `docker-compose.4087.yaml` (keep them equal). The nginx tag is also in CONTRIBUTING's `nginx -t` line. MapProxy's version is `ARG MAPPROXY_VERSION` in `Dockerfile.mapproxy`, where CI reads it, and it's repeated in the `rbt-mapproxy:8.1.0` image name in `docker-compose.yaml`, the GHCR tag in `mapproxy-image.yml` (which the charts repo deploys), CONTRIBUTING, and the `8.1.0` mentions in this file and CONTEXT.md |
-| The public mirror | `PUBLIC_S3_*` in `deploy.sh`, `$script:PublicS3*` in `deploy.ps1`, README "Get the Map Data" |
+| An image pin **(checked)** | `tileserver-gl` is pinned in both `docker-compose.yaml` and `docker-compose.4087.yaml` (keep them equal). The nginx tag is only in `docker-compose.override.yaml`: `scripts/check.sh` reads it from there. MapProxy's version is `ARG MAPPROXY_VERSION` in `Dockerfile.mapproxy`, where CI reads it, and it's repeated in the `rbt-mapproxy:8.1.0` image name in `docker-compose.yaml`, CONTRIBUTING, and the `8.1.0` mentions in this file and CONTEXT.md. The GHCR tag that the charts repo deploys isn't repeated: `mapproxy-image.yml` reads it from the ARG, and the check fails on a literal tag there |
+| The MapProxy image's dependencies **(checked)** | After editing the dependencies in `mapproxy/environment.yml`, regenerate `mapproxy/conda-linux-64.lock` and `mapproxy/conda-linux-aarch64.lock` with `scripts/lock-mapproxy.sh`: each records a fingerprint of the dependencies it was solved from, and `check-sync.py` fails when they disagree. A new `COPY` in `Dockerfile.mapproxy` needs a `!path` line in `.dockerignore` and a line under both `paths:` lists in `mapproxy-image.yml` (also checked) |
+| The public mirror **(checked)** | `PUBLIC_S3_*` in `deploy.sh`, `$script:PublicS3*` in `deploy.ps1`, README "Get the Map Data" |
 | TileserverGL's renderer pool sizes | `docs/troubleshooting.md` |
-| Added a docs page | `mkdocs.yml` `nav` -- `mkdocs build --strict` fails otherwise |
+| A Compose flag or feature a script or Compose file starts using (`healthcheck.start_interval` needs Compose 2.24.0 and Docker Engine 25; `up --wait-timeout` needs 2.17.0) **(checked)** | `MIN_COMPOSE_VERSION` and `MIN_DOCKER_ENGINE_VERSION` in `deploy.sh`, `$script:MinComposeVersion` and `$script:MinDockerEngineVersion` in `deploy.ps1`, README "Requirements", and `docs/troubleshooting.md` "Docker or Docker Compose Is Too Old" |
+| Added a docs page | `mkdocs.yml` `nav` -- `mkdocs build --strict` fails otherwise **(checked)** |
 | Added a config file that must stay LF | `.gitattributes`, and `Repair-ConfigLineEndings` in `deploy.ps1` |
 | The commit conventions | CONTRIBUTING.md, `.cursor/rules/conventional-commits.mdc`, `.githooks/commit-msg`, `commitlint.config.mjs`, `.github/workflows/lint-pr.yml`, `cliff.toml` (how types map to changelog sections), `.github/dependabot.yml` (its commit prefixes), `.github/pull_request_template.md`, this file |
 
 ## Invariants
 
-Each of these is explained in a comment where it lives. Keep those comments.
+Each of these is explained in a comment where it lives. Keep those comments. Those marked **(checked)** fail CI when broken, through `scripts/check.sh` (`check-mapproxy-config.py` and `check-sync.py`) or a CI job.
 
 **Compose**
-- No `-f` flags means base plus override (the default stack), unless `.env` sets `COMPOSE_FILE`; any `-f` drops the override. CI validates all four combinations.
-- Switching away from a 4087 stack leaves `tileservergl4087` running as an orphan, so run `docker compose down --remove-orphans` first.
-- The `x-logging` block is repeated in each file because YAML anchors don't cross files. Keep the copies identical.
+- No `-f` flags means base plus override (the default stack), unless `.env` sets `COMPOSE_FILE`; any `-f` drops the override. CI validates all four combinations **(checked)**.
+- Switching away from a 4087 stack leaves `tileservergl4087` running as an orphan unless `up` gets `--remove-orphans`. The deploy scripts' `--deploy`/`-Deploy` passes it; a hand-run `docker compose up -d` doesn't, so run `docker compose down --remove-orphans` first.
+- The `x-logging` block is repeated in each file because YAML anchors don't cross files. Keep the copies identical **(checked)**.
 - `container_name`s are fixed, and services reach each other by name on `rbt-network`.
 
 **MapProxy**
-- Every cache sets `disable_storage: true`. MapProxy stores nothing; nginx is the only tile cache.
-- The EPSG:3395 and EPSG:4326 caches each take the matching EPSG:3857 cache as their source, one reprojection hop; in the 4087 stack, the EPSG:4326 caches take the matching EPSG:4087 cache instead. Don't chain 4326 through 3395.
-- `mapproxy.4087.yaml` merges over `mapproxy.yaml` through `base:`. Mappings merge key by key. Lists named `sources`, `grids`, `bbox`, `tile_size`, `res` or `max_output_pixels` replace the base's, `layers` merge by `name`, an empty list deletes the base's, and every other list is appended. The source of truth is `merge_dict` in MapProxy 8.1.0's `mapproxy/config/loader.py`. Never restate a list such as `services.wms.srs` there; `check-mapproxy-config.py` fails on duplicates.
+- Every cache sets `disable_storage: true`. MapProxy stores nothing; nginx is the only tile cache **(checked)**.
+- The EPSG:3395 and EPSG:4326 caches each take the matching EPSG:3857 cache as their source, one reprojection hop; in the 4087 stack, the EPSG:4326 caches take the matching EPSG:4087 cache instead. Don't chain 4326 through 3395 **(checked)**.
+- `mapproxy.4087.yaml` merges over `mapproxy.yaml` through `base:`. Mappings merge key by key. Lists named `sources`, `grids`, `bbox`, `tile_size`, `res` or `max_output_pixels` replace the base's, `layers` merge by `name`, an empty list deletes the base's, and every other list is appended. The source of truth is `merge_dict` in MapProxy 8.1.0's `mapproxy/config/loader.py`. Never restate a list such as `services.wms.srs` there; `check-mapproxy-config.py` fails on duplicates **(checked)**.
+- `app.py` installs `mesh_guard.py`, which drops the mesh quads that have a non-finite source coordinate. Without it, the first EPSG:4326 request for the world (the level-0 geodetic tile reaches past the south pole, where PROJ answers `inf`) segfaults a uWSGI worker on linux/amd64 (nginx answers 502), while arm64 renders fine. The Dockerfile runs the guard's self-test, so a lock-file regeneration or version bump that breaks it fails the amd64 build; `python mesh_guard.py --unguarded` shows whether upstream has fixed the problem and the guard can go. `scripts/check.sh sync` checks that `app.py` installs it and the Dockerfile copies and runs it **(checked)**; only an amd64 build shows that it works, which is what CI's amd64 image build and smoke test are for.
 - `services.wms.srs` replaces MapProxy's default list, so it repeats the five defaults next to EPSG:3395.
-- Every grid is `origin: nw` (WMTS silently drops the others) with 512px tiles, matching TileserverGL's `/styles/<ID>/512/{z}/{x}/{y}.png` URLs.
-- Only the overlay sources are `transparent: true`.
-- `UWSGI_CHEAPER` must stay below `UWSGI_PROCESSES` or uWSGI won't start. uWSGI's `harakiri` (75 s) stays below nginx's `proxy_read_timeout` (80 s).
+- Every grid is `origin: nw` (WMTS silently drops the others) with 512px tiles, matching TileserverGL's `/styles/<ID>/512/{z}/{x}/{y}.png` URLs **(checked)**.
+- Only the overlay sources are `transparent: true` **(checked)**.
+- `UWSGI_CHEAPER` must stay below `UWSGI_PROCESSES` or uWSGI won't start. uWSGI's `harakiri` (75 s) stays below nginx's `proxy_read_timeout` (80 s) **(checked)**, and the `UWSGI_*` defaults agree everywhere they are written.
 
 **nginx**
 - Never add `proxy_set_header` inside a `location`: one there silently discards all the server-level ones.
@@ -133,23 +134,28 @@ Each of these is explained in a comment where it lives. Keep those comments.
 **TileserverGL and styles**
 - TileserverGL reads MBTiles and styles only at startup, and nginx can't tell they changed. After changing either, run `./deploy.sh --refresh` with the running stack's flags; without `--4087` it leaves `tileservergl4087` serving the old data.
 - The data files are always named `RBT.mbtiles` and `TERRAIN.mbtiles`. Both TileserverGL containers share the config, styles and fonts; only `/data` differs.
-- A `style.json` must point its sources at `mbtiles://{RBT}` (plus `mbtiles://{TERRAIN}` if it uses the terrain), its sprite at `{styleJsonFolder}/sprite` and its glyphs at `{fontstack}/{range}.pbf`. The weekly sync (`sync-styles.py`) rewrites upstream styles to these, but nothing checks a hand edit.
+- A `style.json` must point its sources at `mbtiles://{RBT}` (plus `mbtiles://{TERRAIN}` if it uses the terrain), its sprite at `{styleJsonFolder}/sprite` and its glyphs at `{fontstack}/{range}.pbf`. The weekly sync (`sync-styles.py`) rewrites upstream styles to these, and `check-sync.py` fails on a hand edit that breaks them **(checked)**.
 - URLs use the `config.json` key, which is the directory name (`RBT-LIGHT`), never the `id` inside `style.json` (`RBT-CANVAS-LIGHT`).
 
 **deploy.sh**
-- It runs under macOS's `/bin/bash` 3.2 with `set -euo pipefail`. That rules out `mapfile`, associative arrays, `${var,,}`, and expanding an array that may be empty; wrap that in a function, as `as_root` and `s3_aws` do.
+- It runs under macOS's `/bin/bash` 3.2 with `set -euo pipefail`. That rules out `mapfile`, associative arrays, `${var,,}`, and expanding an array that may be empty; wrap that in a function, as `as_root` and `s3_aws` do. The `macos` CI job parses it with `/bin/bash -n` and runs `--help` **(checked)**. `scripts/check.sh` follows the same rules, except `set -e`.
 - GNU and BSD `stat` and `date` differ: use `file_mtime_epoch`, `format_epoch` and `parse_iso8601_epoch`.
 - On Linux, Compose runs through `sudo`, which drops exported variables, so Compose settings belong in `.env`. Downloads run unprivileged, with the user's own AWS credential chain.
-- Every step must stay safe to re-run, and the script must stay shellcheck-clean.
+- `.env` is parsed the way Compose parses it: quotes are stripped, an unquoted value ends at the first ` #`. Keep `load_env_file` and `Import-DotEnv` in step with each other.
+- A download is bracketed by checks: partial `<name>.<8 hex>` files are removed, the drive must have the object's `ContentLength` free, and the finished file must be that size. When the mirror's metadata can't be read, warn and skip those checks; never block a download that would have worked.
+- The checks that need no Docker (`require_mbtiles`, `check_uwsgi_settings`) run before anything slow in the deploy step, so a mistake fails in seconds.
+- `--check` changes nothing and is never part of a run with no step flags. It runs last, so `--deploy --check` reports on what it just deployed. It reports with `check_pass`/`check_warn`/`check_fail` rather than `die`, finishes every check, and exits 1 only at the end. It reads the mirror with short timeouts, so an offline machine gets a warning in seconds. A check-only run skips the up-front deploy warnings (its report has the same findings) and uses sudo only when the user can't reach Docker without it.
+- Output colors go through `paint`, which prints plain text unless the stream is a terminal and `NO_COLOR` is unset, so `./deploy.sh --check > rbt-check.txt` holds no escape codes. Don't print raw escape sequences.
+- Every step must stay safe to re-run, and the script must stay shellcheck-clean **(checked)**.
 
 **deploy.ps1**
-- It must work in Windows PowerShell 5.1 under `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'`. Check native commands with `$LASTEXITCODE`. Around one that writes to stderr, set a local `$ErrorActionPreference = 'Continue'`, because 5.1 turns that stderr into a terminating error.
+- It must work in Windows PowerShell 5.1 under `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'`. Check native commands with `$LASTEXITCODE`. Around one that writes to stderr, set a local `$ErrorActionPreference = 'Continue'`, because 5.1 turns that stderr into a terminating error. The `windows` CI job runs `-Help` in 5.1, which catches 5.1-only parse errors and a missing byte-order mark **(checked)**.
 - Only `-Init` needs an elevated session.
 
 **Docs and comments**
 - Readers may be new to Docker: give copy-pasteable commands, explain terms, and state the expected result.
 - The docs and comments write a dash as ` -- `, not an em dash.
-- Link with ordinary relative paths (`docs/x.md` from README, `../README.md#anchor` from `docs/`); `prepare_pages.py` rewrites them for the site. Anchors are GitHub-style slugs, and `pages_hooks.py` makes the site generate the same ones.
+- Link with ordinary relative paths (`docs/x.md` from README, `../README.md#anchor` from `docs/`); `prepare_pages.py` rewrites them for the site and fails the build on a link to a path that isn't in the repo **(checked)**. Anchors are GitHub-style slugs, and `pages_hooks.py` makes the site generate the same ones.
 - Keep the Mermaid diagrams in README and `docs/architecture.md` matching the Compose files.
 - Comments in configs and scripts explain *why*: the constraint, or the failure they prevent, often at length. Match that when you edit, and don't strip the existing rationale.
 

@@ -51,6 +51,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+      # start_interval is how often to probe during start_period. Left unset
+      # it falls back to `interval`, so a service that is ready in seconds
+      # still waits 30s for its first probe -- and the services start in a
+      # chain (depends_on: service_healthy), so those waits add up: nginx
+      # would be reported healthy only after about 90s. Needs Docker Engine
+      # 25+ and Compose 2.24+ (older ones reject the key); deploy.sh and
+      # deploy.ps1 check both.
+      start_interval: 5s
 
   tileservergl:
     image: maptiler/tileserver-gl:v5.7.0
@@ -61,8 +69,11 @@ services:
       # EPSG:3857 (Web Mercator) MBTiles -- see docker-compose.4087.yaml's
       # tileservergl4087 service, which mounts tileserver/data/4087 instead.
       - ./tileserver/data/3857:/data
-      - ./tileserver/fonts:/fonts
-      - ./tileserver/styles:/styles
+      # Read-only: TileserverGL only reads fonts and styles. Both are tracked
+      # in git (the styles are synced from upstream), so a container that
+      # could write to them would silently dirty the checkout.
+      - ./tileserver/fonts:/fonts:ro
+      - ./tileserver/styles:/styles:ro
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped
@@ -76,6 +87,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 180s
+      # See the mapproxy health check above for why this is set.
+      start_interval: 5s
 
 networks:
   rbt-network:

@@ -1,7 +1,17 @@
-# Checks for pull requests and main: the shell and PowerShell scripts, every
-# Compose stack, nginx.conf, JSON files and MapProxy's configs. The docs
-# build runs in pages.yml, and the MapProxy image build in
-# mapproxy-image.yml. CONTRIBUTING.md lists the same checks to run locally.
+# Checks for pull requests and main. The checks themselves live in
+# scripts/check.sh, which CONTRIBUTING.md tells you to run locally, so a local
+# run and CI can't drift apart:
+#
+#   scripts  ShellCheck, and a parse of deploy.ps1
+#   compose  every Compose stack, and nginx.conf in the pinned nginx image
+#   configs  JSON files, MapProxy's configs and the cross-file sync checks
+#
+# The jobs below the script-driven ones run what the Ubuntu runner can't:
+# deploy.ps1 under the Windows PowerShell 5.1 that Windows 11 ships, deploy.sh
+# under the bash 3.2 that macOS ships, and the workflows themselves.
+#
+# The docs build runs in pages.yml, and the MapProxy image build in
+# mapproxy-image.yml.
 
 name: CI
 
@@ -25,19 +35,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: ShellCheck
-        run: shellcheck deploy.sh .githooks/commit-msg
-
-      - name: Parse deploy.ps1
-        shell: pwsh
-        run: |
-          $tokens = $null
-          $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/deploy.ps1", [ref]$tokens, [ref]$errors)
-          foreach ($e in $errors) {
-            Write-Output "::error file=deploy.ps1,line=$($e.Extent.StartLineNumber)::$($e.Message)"
-          }
-          if ($errors) { exit 1 }
+      - name: ShellCheck and parse deploy.ps1
+        run: scripts/check.sh scripts
 
   compose:
     name: Compose and nginx
@@ -46,52 +45,95 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Validate each Compose stack
-        run: |
-          check() {
-            local args=() file
-            for file in "$@"; do args+=(-f "$file"); done
-            echo "docker compose ${args[*]} config"
-            docker compose "${args[@]}" config --quiet
-          }
-          check docker-compose.yaml
-          check docker-compose.yaml docker-compose.override.yaml
-          check docker-compose.yaml docker-compose.4087.yaml
-          check docker-compose.yaml docker-compose.4087.yaml docker-compose.override.yaml
-
-      # With the nginx image docker-compose.override.yaml pins. mapproxy and
-      # tileservergl always exist when nginx starts; tileservergl4087 only in
-      # the 4087 stack, so nginx.conf must not need its address at startup.
-      - name: nginx -t
-        run: |
-          image="$(docker compose -f docker-compose.yaml -f docker-compose.override.yaml config --images | grep '^nginx:')"
-          docker run --rm \
-            --add-host mapproxy:127.0.0.1 \
-            --add-host tileservergl:127.0.0.1 \
-            -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" \
-            "$image" nginx -t
+      - name: Validate each Compose stack and nginx.conf
+        run: scripts/check.sh compose
 
   configs:
-    name: JSON and MapProxy configs
+    name: JSON, MapProxy configs and sync
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Parse JSON files
-        run: |
-          git ls-files '*.json' | while IFS= read -r file; do
-            python3 -m json.tool "$file" > /dev/null || { echo "::error file=$file::invalid JSON"; exit 1; }
-          done
-
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          # MapProxy's version is pinned in Dockerfile.mapproxy, not in a
+          # requirements file, so that file keys the pip cache.
+          cache-dependency-path: Dockerfile.mapproxy
 
       - name: Install MapProxy
-        # The version Dockerfile.mapproxy installs.
+        # The version Dockerfile.mapproxy installs. It brings PyYAML, which
+        # check-sync.py needs too.
         run: pip install "MapProxy==$(sed -n 's/^ARG MAPPROXY_VERSION=//p' Dockerfile.mapproxy)"
 
-      - name: Load the configs
-        run: python .github/scripts/check-mapproxy-config.py
+      - name: Check JSON, the MapProxy configs and the cross-file facts
+        run: scripts/check.sh configs sync
+
+  # deploy.ps1 has to work in Windows PowerShell 5.1 (powershell.exe), which
+  # Windows 11 ships, not only in the PowerShell 7 (pwsh) that the scripts job
+  # parses it with. 5.1 reads a file with no byte-order mark as the system code
+  # page, and rejects syntax PowerShell 7 accepts; only running it there shows
+  # either. -Help parses the whole file, defines every function, and exits
+  # before the script touches Docker or the network.
+  windows:
+    name: Windows PowerShell 5.1
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: deploy.ps1 -Help in Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy.ps1 -Help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Error severity only (see the settings file): the point is to catch what
+      # makes a script wrong, not to restyle a long script.
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          $findings = Invoke-ScriptAnalyzer -Path deploy.ps1 -Settings .github/PSScriptAnalyzerSettings.psd1
+          foreach ($f in $findings) {
+            Write-Output "::error file=deploy.ps1,line=$($f.Line)::$($f.RuleName): $($f.Message)"
+          }
+          if ($findings) { exit 1 }
+
+  # macOS ships bash 3.2 and deploy.sh has to run under it: no mapfile,
+  # associative arrays or ${var,,}. bash 4+ on the Linux runners accepts all
+  # three, so only /bin/bash here can catch one. -n parses without running.
+  macos:
+    name: macOS bash 3.2
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Parse the shell scripts and run deploy.sh --help
+        run: |
+          /bin/bash --version | head -1
+          /bin/bash -n deploy.sh
+          /bin/bash -n scripts/check.sh
+          /bin/bash -n .github/scripts/smoke-test.sh
+          /bin/bash deploy.sh --help > /dev/null
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Checks the workflows' syntax, expressions and (through ShellCheck) the
+      # shell in their run: steps. Run it locally with
+      #   docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color

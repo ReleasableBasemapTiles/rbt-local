@@ -1,0 +1,133 @@
+# Starts the real stack and uses it: the one check that runs what a user runs.
+# ci.yml validates files; this proves they work together. It deploys with
+# deploy.sh, then asks the stack for tiles, to catch what no file check can: a
+# service that won't start or stay healthy, an image bump that breaks
+# rendering, nginx or MapProxy wiring that no longer routes, the tile cache
+# not caching, a refresh that doesn't purge.
+#
+# The real MBTiles are hundreds of GB, so it runs on tiny fixtures
+# (.github/scripts/make-fixture-mbtiles.py) that draw only each style's
+# background. That is enough to exercise everything except the map data. The
+# assertions are in .github/scripts/smoke-test.sh, which you can run against a
+# stack of your own.
+#
+# Two jobs, the default stack and the EPSG:4087 stack, both with nginx. Only
+# changes that can affect a running stack start it.
+
+name: Smoke test
+
+on:
+  pull_request:
+    paths:
+      - docker-compose*.yaml
+      - Dockerfile.mapproxy
+      - .dockerignore
+      - deploy.sh
+      - deploy.ps1
+      - nginx/**
+      - mapproxy/**
+      - tileserver/config/**
+      - tileserver/styles/**
+      - .github/workflows/smoke.yml
+      - .github/scripts/make-fixture-mbtiles.py
+      - .github/scripts/smoke-test.sh
+  push:
+    branches: [main]
+    paths:
+      - docker-compose*.yaml
+      - Dockerfile.mapproxy
+      - .dockerignore
+      - deploy.sh
+      - deploy.ps1
+      - nginx/**
+      - mapproxy/**
+      - tileserver/config/**
+      - tileserver/styles/**
+      - .github/workflows/smoke.yml
+      - .github/scripts/make-fixture-mbtiles.py
+      - .github/scripts/smoke-test.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: Smoke test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # One stack failing says nothing about the other; see both.
+      fail-fast: false
+      matrix:
+        include:
+          - name: default stack
+            flags: ""
+          - name: EPSG:4087 stack
+            flags: "--4087"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The MapProxy image is the slow part (it resolves a conda environment),
+      # so build it here with the layer cache. deploy.sh builds it again, and
+      # `up` once more because the Compose file sets `pull_policy: build`; both
+      # run through the same buildx builder and find every layer in it, so they
+      # take seconds.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # The tag docker-compose.yaml gives the image, so the Compose build and
+      # this one are the same image and the version isn't repeated here.
+      - name: Read the MapProxy image tag
+        id: image
+        run: echo "tag=$(docker compose -f docker-compose.yaml config --images | grep '^rbt-mapproxy:')" >> "$GITHUB_OUTPUT"
+
+      - name: Build the MapProxy image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.mapproxy
+          load: true
+          push: false
+          tags: ${{ steps.image.outputs.tag }}
+          # Its own cache, plus whatever mapproxy-image.yml cached on main.
+          cache-from: |
+            type=gha,scope=smoke-mapproxy
+            type=gha
+          cache-to: type=gha,mode=max,scope=smoke-mapproxy,ignore-error=true
+
+      - name: Write fixture MBTiles
+        run: python3 .github/scripts/make-fixture-mbtiles.py
+
+      # --perm gives the MapProxy container's user the runtime directories,
+      # as on any fresh Linux clone. Docker is already on the runner, so no
+      # --init, and the fixtures stand in for --download.
+      - name: Deploy
+        run: ./deploy.sh ${{ matrix.flags }} --perm --deploy
+
+      - name: Check
+        run: ./deploy.sh ${{ matrix.flags }} --check
+
+      - name: Smoke test
+        run: .github/scripts/smoke-test.sh ${{ matrix.flags }}
+
+      - name: Container logs
+        if: failure()
+        run: |
+          docker ps -a
+          for name in nginx mapproxy tileservergl tileservergl4087; do
+            echo "::group::docker logs $name"
+            docker logs --tail 300 "$name" 2>&1 || true
+            echo "::endgroup::"
+          done
+
+      # The runner is thrown away, but a stack left running would hold the
+      # ports if a later step were ever added.
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml down --remove-orphans

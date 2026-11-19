@@ -24,7 +24,7 @@ Releasable Basemap Tiles (RBT) lets U.S. services and international coalition pa
 ### Design decisions
 
 - **nginx is the only tile cache.** MapProxy runs every cache with storage disabled and asks TileserverGL for each tile; nginx keeps the rendered images for 30 days, up to 10 GB. Nothing can tell when the data or styles behind a cached image change, so new data needs a Refresh.
-- **A custom MapProxy image.** The official image's Debian PROJ 9.1.1 treats EPSG:4087 as spherical; conda-forge's PROJ 9.8 and later is ellipsoidal. MapProxy is pip-installed with `--no-deps` so a PyPI `pyproj` wheel, which bundles its own PROJ, can't undo that, and the build asserts the PROJ version and a known EPSG:4087 coordinate. uWSGI serves HTTP itself (`http-socket`), so nginx or a load balancer can talk to it directly.
+- **A custom MapProxy image.** The official image's Debian PROJ 9.1.1 treats EPSG:4087 as spherical; conda-forge's PROJ 9.8 and later is ellipsoidal. MapProxy is pip-installed with `--no-deps` so a PyPI `pyproj` wheel, which bundles its own PROJ, can't undo that, and the build asserts the PROJ version and a known EPSG:4087 coordinate. The conda packages are pinned by per-platform lock files, so a build doesn't move when conda-forge does. uWSGI serves HTTP itself (`http-socket`), so nginx or a load balancer can talk to it directly. `mapproxy/docker/mesh_guard.py` keeps non-finite coordinates away from Pillow, which crashes a worker on amd64 when MapProxy reprojects the EPSG:4326 level-0 tile (the one tile that reaches past a pole); the build runs its self-test.
 - **Reproject instead of re-rendering.** TileserverGL renders each style only in a native projection: EPSG:3857, plus EPSG:4087 in that deployment. MapProxy derives EPSG:3395 and EPSG:4326 by reprojection, each one hop away.
 - **The EPSG:4087 deployment.** Reprojecting Web Mercator to EPSG:4326 resamples nonlinearly away from the equator. EPSG:4087 shares EPSG:4326's linear scaling, and their level-0 resolutions match, so 4087 to 4326 is a pure unit conversion and the EPSG:4326 layers come out sharper. The cost is a second TileserverGL and a second pair of MBTiles.
 - **nginx is optional.** MapProxy and TileserverGL always publish their own ports, on their native paths. Without nginx those ports are the only way in, ready to sit behind an AWS ALB or CloudFront, which then takes over caching.
@@ -120,13 +120,16 @@ _Avoid_: mode, variant, profile (Compose profiles aren't used)
 `mapproxy/config/mapproxy.4087.yaml`: `base: mapproxy.yaml` plus only the EPSG:4087 grid, Sources and caches, and new sources for the EPSG:4326 caches.
 
 **Deploy Step**:
-One stage of the deploy scripts, always run in this order: Init, Download, Perm (`deploy.sh`) or Prep (`deploy.ps1`), Refresh, Deploy. With no step flags, all of them run, and Refresh runs only when Download fetched new data.
+One stage of the deploy scripts, always run in this order: Init, Download, Perm (`deploy.sh`) or Prep (`deploy.ps1`), Refresh, Deploy, Check. With no step flags, Init, Download, Perm/Prep and Deploy run, and Refresh runs only when Download fetched new data. Check is the read-only step: it changes nothing, is never part of that default run, and comes last, so `--deploy --check` deploys and then reports (a PASS, WARN or FAIL line per check; exit 1 on any FAIL). `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) are modifiers, not steps: on their own they still run every step.
+
+**Orphan**:
+A container in the Compose project that the files named in the current `-f` list no longer define, such as `tileservergl4087` after leaving the EPSG:4087 Deployment, or `nginx` after moving to Without nginx. `up -d` leaves orphans running unless given `--remove-orphans`; the deploy scripts' Deploy step passes it.
 
 **Prefix**:
 The path nginx routes on and strips (`/mapproxy`, `/tileservergl`, `/tileservergl4087`), then passes back to the backend so the URLs it generates keep it. A request to a service's own port uses its native, unprefixed paths.
 
 **MapProxy Image**:
-The custom image built from `Dockerfile.mapproxy`: `rbt-mapproxy:8.1.0` locally, `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy` when published. `8.1.0` is MapProxy's version.
+The custom image built from `Dockerfile.mapproxy`: `rbt-mapproxy:8.1.0` locally, `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy` when published. `8.1.0` is MapProxy's version. Its conda packages are the exact ones in `mapproxy/conda-linux-64.lock` and `mapproxy/conda-linux-aarch64.lock`, which `scripts/lock-mapproxy.sh` regenerates from `mapproxy/environment.yml`; the image never solves at build time.
 
 **Release**:
 A `v*` tag of this repository (Semantic Versioning), recorded in `CHANGELOG.md` and versioned independently of the MapProxy Image.

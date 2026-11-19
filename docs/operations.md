@@ -40,14 +40,22 @@ This downloads `RBT.mbtiles` only if the mirror's copy is newer than yours (`TER
 
 ## Switching deployments
 
-Say you ran the [EPSG:4087 deployment](deployment-4087.md) and want the default one again, or want to start using `--no-nginx`. All four deployments are one Compose project, so containers from the old one can be left behind (Compose calls them *orphans*). Take the old deployment down first, naming the same files you started it with, then deploy the new one:
+Say you ran the [EPSG:4087 deployment](deployment-4087.md) and want the default one again, or want to start using `--no-nginx`. All four deployments are one Compose project, so containers from the old one can be left behind (Compose calls them *orphans*). The deploy scripts clean them up: `--deploy` runs `docker compose up -d --wait --remove-orphans`, so you only need to run the deployment you want next:
 
 ```bash
-docker compose down --remove-orphans     # a deployment started with plain `docker compose`, or the default `./deploy.sh`
 ./deploy.sh --deploy                     # the deployment you want next, e.g. add --no-nginx
 ```
 
-If you started the old one with `--4087` or `--no-nginx`, give `docker compose` the `-f` flags shown at the end of that deploy (for example `docker compose -f docker-compose.yaml -f docker-compose.4087.yaml down --remove-orphans`).
+Pair `--4087` and `--no-nginx` with a step like `--deploy`. On their own they still mean "run every step", including installing software and downloading the map data.
+
+If the old deployment is running and the new run doesn't name it (for example you're leaving `--4087`), the script warns at the start about what will happen, so you can stop with Ctrl+C and change the flags.
+
+A plain `docker compose up -d` does *not* remove orphans. If you start deployments by hand, take the old one down first, naming the same files you started it with (the deploy scripts print them at the end):
+
+```bash
+docker compose down --remove-orphans     # a deployment started with plain `docker compose`
+docker compose -f docker-compose.yaml -f docker-compose.4087.yaml down --remove-orphans   # one started with --4087
+```
 
 ## Uninstalling and reclaiming disk
 
@@ -89,6 +97,7 @@ When you contact the RBT program manager, these details answer most of the first
 ```bash
 git rev-parse --short HEAD               # which version of this repository you have
 git status --short                       # any files you've changed
+./deploy.sh --check > rbt-check.txt 2>&1 # what the deploy script finds wrong (read-only; add --4087 and/or --no-nginx)
 docker version
 docker compose version
 docker compose ps                        # which services run, and whether they're healthy
@@ -99,6 +108,7 @@ docker compose logs --no-color --tail 200 > rbt-logs.txt
 ```powershell
 git rev-parse --short HEAD
 git status --short
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Check | Out-File -Encoding utf8 rbt-check.txt
 docker version
 docker compose version
 docker compose ps
@@ -106,4 +116,4 @@ Get-ChildItem tileserver\data\3857, tileserver\data\4087 | Format-Table Name, Le
 docker compose logs --no-color --tail 200 | Out-File -Encoding utf8 rbt-logs.txt
 ```
 
-Attach `rbt-logs.txt` and the output of the other commands. Two cautions: the logs include the IP addresses of the clients that requested tiles, and `.env` may name a private bucket, so share them only as your organization's rules allow, and check `.env` before sending it.
+Attach `rbt-check.txt`, `rbt-logs.txt` and the output of the other commands. Two cautions: the logs include the IP addresses of the clients that requested tiles, and `.env` may name a private bucket, so share them only as your organization's rules allow, and check `.env` before sending it.

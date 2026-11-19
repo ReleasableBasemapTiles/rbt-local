@@ -5,6 +5,14 @@
 #
 # Build from the repo root:
 #   docker build -f Dockerfile.mapproxy -t rbt-mapproxy:8.1.0 .
+#
+# Reproducible: the conda packages come from mapproxy/conda-linux-64.lock and
+# mapproxy/conda-linux-aarch64.lock -- exact package URLs with checksums --
+# not from a fresh solve of mapproxy/environment.yml, so a build next month
+# installs the same libraries as one today and a conda-forge release can't
+# change what a merge publishes. After editing environment.yml, regenerate
+# the lock files with scripts/lock-mapproxy.sh. MapProxy itself is pinned by
+# MAPPROXY_VERSION below.
 
 FROM mambaorg/micromamba:2.10.0-debian12-slim
 
@@ -36,17 +44,27 @@ ENV PATH="${MAMBA_ROOT_PREFIX}/bin:${PATH}" \
 
 USER $MAMBA_USER
 
-COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/environment.yml /tmp/environment.yml
-RUN micromamba install -y -n base -f /tmp/environment.yml && \
+# One lock file per CPU architecture: conda packages are built per platform,
+# and the image is published for both linux/amd64 and linux/arm64. The lock
+# file is an explicit one (every package URL, with its checksum), which
+# micromamba installs without solving, so nothing is resolved at build time.
+COPY --chown=$MAMBA_USER:$MAMBA_USER \
+     mapproxy/conda-linux-64.lock mapproxy/conda-linux-aarch64.lock /tmp/
+RUN case "$(uname -m)" in \
+      x86_64)  platform=linux-64 ;; \
+      aarch64) platform=linux-aarch64 ;; \
+      *) echo "no conda lock file for $(uname -m)" >&2; exit 1 ;; \
+    esac && \
+    micromamba install -y -n base -f "/tmp/conda-${platform}.lock" && \
     micromamba clean --all --yes && \
-    rm /tmp/environment.yml
+    rm /tmp/conda-linux-64.lock /tmp/conda-linux-aarch64.lock
 
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
 ARG MAPPROXY_VERSION=8.1.0
 # --no-deps: MapProxy is not on conda-forge; its PyPI deps include pyproj,
 # whose wheels bundle a private PROJ and would undo the >=9.8 pin above.
 # So pip never installs MapProxy's requirements: `pip check` fails the build
-# if environment.yml stops providing one, and the base-config load below
+# if the lock files stop providing one, and the base-config load below
 # proves MapProxy imports and builds its WSGI app against these libraries.
 RUN pip install --no-cache-dir --no-deps "MapProxy==${MAPPROXY_VERSION}" && \
     pip check && \
@@ -65,7 +83,14 @@ make_wsgi_app('/tmp/mapproxy-smoke/mapproxy.yaml')" && \
     rm -rf /tmp/mapproxy-smoke
 
 WORKDIR /mapproxy
-COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/docker/app.py /mapproxy/app.py
+COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/docker/app.py mapproxy/docker/mesh_guard.py /mapproxy/
+# mesh_guard.py keeps non-finite coordinates out of Pillow's mesh transform,
+# which segfaults a worker on linux/amd64 (the reason is in its header). Run
+# its self-test here so a lock-file update that changes the behaviour fails
+# the build instead of the first EPSG:4326 request. The
+# segfault only happens on x86-64, so the amd64 build is the one that proves
+# it.
+RUN python /mapproxy/mesh_guard.py
 
 # Numeric USER -- OpenShift validates this; Compose/Helm already run as 1000.
 USER 1000

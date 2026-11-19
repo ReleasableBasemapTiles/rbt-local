@@ -60,7 +60,7 @@ Clone to a path on your `C:` drive (e.g. `C:\Users\<you>\rbt-local`) rather than
 
 ### Step 4: Download the map data and start RBT
 
-Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first with the deploy script's download step, which doesn't need an elevated PowerShell. It needs only the AWS CLI from Step 1 -- the data comes from a public mirror, so there are no credentials to set up (see [Get the Map Data](../README.md#get-the-map-data) in the main README). This repo's config files do need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
+Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs, and the runtime directories (`mapproxy/data`, `mapproxy/locks` and the others) come with the clone as placeholder files. Download the map data first with the deploy script's download step, which doesn't need an elevated PowerShell. It needs only the AWS CLI from Step 1 -- the data comes from a public mirror, so there are no credentials to set up (see [Get the Map Data](../README.md#get-the-map-data) in the main README). This repo's config files do need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
 
 Windows blocks unsigned scripts by default ("running scripts is disabled on this system"), so run `deploy.ps1` through `powershell -ExecutionPolicy Bypass -File`, which allows that one run only. (The `Set-ExecutionPolicy Bypass -Scope Process` line in Step 1 lasted only as long as that PowerShell window.)
 
@@ -132,8 +132,14 @@ curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "a
     sudo ./aws/install --update && \
     rm -rf aws awscliv2.zip;
 
-# Remove old Docker versions (if any exist)
-sudo apt-get remove docker docker-engine docker.io containerd runc;
+# Remove old Docker packages, if any are installed. Only installed ones are
+# named, because apt-get stops at a package it has never heard of
+for pkg in docker docker-engine docker.io docker-doc docker-compose \
+    docker-compose-v2 podman-docker containerd runc; do
+    if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null)" == ii* ]]; then
+        sudo apt-get remove -y "$pkg";
+    fi
+done;
 
 # Add Docker's official repository
 sudo mkdir -m 0755 -p /etc/apt/keyrings;
@@ -197,8 +203,7 @@ cd rbt-local
 ```bash
 # The mapproxy container runs as uid/gid 1000 (Dockerfile.mapproxy) and
 # writes to these directories -- also the uid/gid of the first user WSL
-# creates for you. mapproxy/data isn't in the repo, so create it first.
-mkdir -p mapproxy/data
+# creates for you.
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
 # Directories 775, files 664. An older version of this step made the .txt
 # files in mapproxy/locks and mapproxy/tile_locks executable, which git

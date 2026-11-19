@@ -12,7 +12,9 @@
 # or run `./deploy.sh --4087` / `.\deploy.ps1 -Use4087`, or set COMPOSE_FILE
 # in .env (see .env.example) so plain `docker compose ...` picks the files.
 # Going back to the default stack leaves tileservergl4087 running as an
-# orphan, so switch with `docker compose down --remove-orphans` first.
+# orphan unless `up` is given --remove-orphans, which ./deploy.sh --deploy
+# does. With a plain `docker compose up -d`, switch with
+# `docker compose down --remove-orphans` first.
 
 # Log rotation, as in docker-compose.yaml (YAML anchors don't cross files).
 x-logging: &logging
@@ -44,8 +46,9 @@ services:
       - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_4087_PORT:-8083}:8080"
     volumes:
       - ./tileserver/data/4087:/data
-      - ./tileserver/fonts:/fonts
-      - ./tileserver/styles:/styles
+      # Read-only, as in tileservergl (docker-compose.yaml).
+      - ./tileserver/fonts:/fonts:ro
+      - ./tileserver/styles:/styles:ro
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped
@@ -59,3 +62,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 180s
+      # See the mapproxy health check in docker-compose.yaml for why this is
+      # set.
+      start_interval: 5s
