@@ -75,26 +75,26 @@ The screenshots below come from an earlier, remote deployment, so they show its 
    - **URL**: The WMTS URL copied in step 2
    - **WMTS server-side tile pixel ratio**: Choose **High (192 DPI)** for better quality
 
-   ![CONNECTION DETAILS](../images/connection_details.png)
+   ![QGIS "Create a New WMS/WMTS Connection" dialog with the name, the WMTS URL, and the tile pixel ratio set to High (192 DPI)](../images/connection_details.png)
 
 5. Click **OK** to save the connection
 6. Expand your new WMTS connection, right-click the layer, and select **Add Layer to Project**
 
-   ![CONNECTION DETAILS](../images/add_layer.png)
+   ![QGIS Browser panel: right-clicking the layer under the new WMTS connection and choosing Add Layer to Project](../images/add_layer.png)
 
 7. (Optional) Improve rendering quality:
    - Right-click the layer in the Layers panel and select **Properties**
 
-   ![CONNECTION DETAILS](../images/properties.png)
+   ![QGIS Layers panel: right-clicking the layer, with Properties at the bottom of the menu](../images/properties.png)
    - Go to **Symbology** tab
    - Set **Resampling** to **Bilinear** for both "Zoomed in" and "Zoomed out"
    - Click **OK**
 
-   ![CONNECTION DETAILS](../images/layer_properties.png)
+   ![QGIS Layer Properties, Symbology tab, with Resampling set to Bilinear for zoomed in and zoomed out](../images/layer_properties.png)
 
 8. You now have a WMTS basemap from TileserverGL!
 
-   ![CONNECTION DETAILS](../images/basemap.png)
+   ![QGIS map window showing the RBT basemap around Riga](../images/basemap.png)
 
 ### From ArcGIS Pro
 
@@ -124,7 +124,7 @@ The screenshots below come from an earlier, remote deployment, so they show its 
 
 6. You now have a WMTS basemap from TileserverGL!
 
-   ![CONNECTION DETAILS](../images/arcgis_basemap.png)
+   ![ArcGIS Pro map window showing the RBT basemap around Riga](../images/arcgis_basemap.png)
 
 ## Advanced TileserverGL Endpoints
 
@@ -187,7 +187,7 @@ Over WMTS, each layer is offered in one TileMatrixSet -- `webmercator` for the `
 
 ## Troubleshooting GIS Client Connections
 
-1. **Connection Failed**: Ensure Docker containers are running (`docker ps`), and check that your firewall allows connections on port 8082 (or 8080/8081 if bypassing nginx)
+1. **Connection Failed**: Ensure the services are running and healthy (`docker compose ps`), and check that your firewall allows connections on port 8082 (or 8080/8081 if bypassing nginx)
 2. **No Layers Visible**: Check that you've downloaded the map data (see the main README's [Get the Map Data](../README.md#get-the-map-data)) and check Docker logs: `docker compose logs`
 3. **Slow Performance**: Connect through nginx (port 8082), which caches the map images it serves. The first request for each tile is always slower, while TileserverGL renders it
 4. **Style Issues**: Vector tiles require GIS client support for MapLibre styles

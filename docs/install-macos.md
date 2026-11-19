@@ -28,6 +28,8 @@ docker --version
 docker compose version
 ```
 
+**Give Docker Desktop enough memory.** Docker Desktop runs the containers in its own virtual machine, whose memory limit is separate from your Mac's (by default, a fraction of your RAM -- about half). This stack recommends 16GB, so on a 16GB Mac, open Docker Desktop's **Settings -> Resources -> Advanced**, raise the memory limit as far as you can spare, then choose **Apply & restart**. See [Docker Desktop Runs Out of Memory](troubleshooting.md#macos-docker-desktop-runs-out-of-memory) if containers are killed later.
+
 ## Step 3: Clone the repository
 
 ```bash
@@ -41,9 +43,12 @@ Unlike Linux, there's no `chown`/`chmod` permissions step here -- Docker Desktop
 
 ```bash
 # Download the map data into tileserver/data/3857/ (add --4087 for the
-# EPSG:4087 deployment), then start the RBT stack from the rbt-local directory
+# EPSG:4087 deployment), then start the RBT stack from the rbt-local directory.
+# --wait makes it wait until every service passes its health check
+# (TileserverGL can take a few minutes to open the map data), and fail if one
+# doesn't.
 ./deploy.sh --download
-docker compose up -d
+docker compose up -d --wait
 
 # Check logs
 docker compose logs -f

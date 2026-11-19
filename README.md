@@ -14,6 +14,7 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 | Get sharper EPSG:4326 maps | Add `--4087` (or `-Use4087`) | [The EPSG:4087 Deployment](docs/deployment-4087.md) |
 | Run on Kubernetes or OpenShift | Use the Helm charts in the separate [ReleasableBasemapTiles/charts](https://github.com/ReleasableBasemapTiles/charts) repository -- this one covers Docker deployments only | [ReleasableBasemapTiles/charts](https://github.com/ReleasableBasemapTiles/charts) |
 | Check a running deployment, or connect QGIS/ArcGIS | Start from the [endpoints](#endpoints) below | [Verifying](docs/verify.md), [GIS clients](docs/gis-clients.md) |
+| Update an existing install, switch deployments, uninstall, or gather details for a support request | Follow the operations guide | [Operating RBT](docs/operations.md) |
 
 ## Requirements
 
@@ -22,6 +23,45 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 - Internet connection, for downloading components and the MBTiles data
 - Minimum 16GB of RAM and 8 cores CPU recommended
 - Disk space: enough for the two MBTiles files described below (four with the EPSG:4087 deployment), **plus** up to 10 GB for nginx's tile cache and room for the MapProxy image. The datasets are updated periodically, so we don't pin sizes here that would go stale -- the `aws s3 ls` command under [Get the Map Data](#get-the-map-data) lists the current ones
+
+## Quickstart
+
+**Before you start**, check that:
+
+- **You have the disk space.** The map data is hundreds of GB, so the first run takes a while. [Get the Map Data](#get-the-map-data) shows the command that lists the current file sizes (it needs the AWS CLI, which the deploy script installs, so on a fresh machine run it after the first `--init` step).
+- **The ports are free.** RBT publishes ports 8080, 8081 and 8082 (plus 8083 for the [EPSG:4087 deployment](docs/deployment-4087.md)). If something already uses one, set a different port in `.env` (step 2) rather than stopping that program.
+- **Your machine is big enough.** 16GB of RAM and 8 cores are recommended. On Windows and macOS, Docker Desktop caps its own memory below the machine's total, so see [Installing on Windows 11](docs/install-windows.md) and [Installing on macOS](docs/install-macos.md) for raising it.
+
+1. **Install Git** if you don't already have it (most Macs and Linux systems do; on Windows 11 try `winget install Git.Git`, or see the per-OS guide below), then clone this repository and open a terminal inside it:
+
+   ```bash
+   git clone https://github.com/ReleasableBasemapTiles/rbt-local.git
+   cd rbt-local
+   ```
+
+2. **Optionally, copy `.env.example` to `.env`** to change ports, bind address, or other settings. You don't need it for the map data.
+
+3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data from the public mirror (no credentials needed -- see [How the deploy scripts download it](#how-the-deploy-scripts-download-it)), and starts RBT. No other manual steps are required.
+
+   **macOS or Linux:**
+
+   ```bash
+   ./deploy.sh
+   ```
+
+   **Windows 11**, in PowerShell opened as Administrator. Windows blocks unsigned scripts by default ("running scripts is disabled on this system"), so start it like this, which allows this one run only:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+   ```
+
+   **Windows 11 with WSL2**: use `./deploy.sh` inside your WSL2 distribution, as on Linux. Read [Option B in Installing on Windows 11](docs/install-windows.md#option-b-wsl2) first: clone into your Linux home directory (`~`), not under `/mnt/c`, and raise WSL2's memory limit.
+
+4. **Open the style previews** at `http://localhost:8082/tileservergl/` in a browser. If you see the six RBT styles, RBT is working. [Verifying Your Installation](docs/verify.md) has the full checklist, and the script's last lines print the commands for viewing logs and stopping RBT.
+
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, or the deployment options below.
+
+Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
 ## Get the Map Data
 
@@ -36,7 +76,7 @@ RBT serves two map files -- `RBT.mbtiles` (the vector map) and `TERRAIN.mbtiles`
 | Every deployment | `s3://mbtiles/3857/RBT.mbtiles`, `s3://mbtiles/3857/TERRAIN.mbtiles` | `tileserver/data/3857/` |
 | [EPSG:4087](docs/deployment-4087.md) (`--4087` / `-Use4087`) | `s3://mbtiles/4087/RBT.mbtiles`, `s3://mbtiles/4087/TERRAIN.mbtiles` | `tileserver/data/4087/` |
 
-The files are large, so the first run takes a while. To check their current sizes (and your free disk space) beforehand:
+The files are large, so the first run takes a while. To check their current sizes (and your free disk space) beforehand, run this once the AWS CLI is installed (`./deploy.sh --init` or `.\deploy.ps1 -Init` installs it):
 
 ```bash
 aws s3 ls s3://mbtiles/ --recursive --human-readable --no-sign-request --region us-east-1 --endpoint-url https://rustfs-rbt-agc-dev.apps.kubic.dev.ngaxc.net
@@ -64,35 +104,6 @@ TileserverGL reads the files only at startup. If you replace them some other way
 ### Using your own S3 bucket
 
 This is optional -- most deployments should use the public mirror. To download from a different bucket instead (for example, a copy you host yourself), set `S3_BUCKET_RBT` and `S3_BUCKET_TERRAIN` in `.env` to that bucket's path (plus `S3_BUCKET_RBT_4087`/`S3_BUCKET_TERRAIN_4087` for `--4087`; see [`.env.example`](.env.example)). Then give the AWS CLI credentials for that bucket -- for example with `aws configure --profile rbt`, uncommenting `AWS_PROFILE=rbt` in `.env`. Any file whose variable you leave unset still comes from the public mirror.
-
-## Quickstart
-
-1. **Install Git** if you don't already have it (most Macs and Linux systems do; on Windows 11 try `winget install Git.Git`, or see the per-OS guide below), then clone this repository and open a terminal inside it:
-
-   ```bash
-   git clone https://github.com/ReleasableBasemapTiles/rbt-local.git
-   cd rbt-local
-   ```
-
-2. **Optionally, copy `.env.example` to `.env`** to change ports, bind address, or other settings. You don't need it for the map data.
-
-3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data from the public mirror (no credentials needed -- see [How the deploy scripts download it](#how-the-deploy-scripts-download-it)), and starts RBT. No other manual steps are required.
-
-   **macOS or Linux:**
-
-   ```bash
-   ./deploy.sh
-   ```
-
-   **Windows 11**, in PowerShell opened as Administrator:
-
-   ```powershell
-   .\deploy.ps1
-   ```
-
-Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, or the deployment options below.
-
-Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
 ## Deployment Options
 
@@ -176,6 +187,7 @@ Something not working? See [Troubleshooting](docs/troubleshooting.md) for common
 - [Architecture](docs/architecture.md) -- what RBT is, why it uses vector tiles, the technical design, a diagram of each deployment, and how tile caching works
 - [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), [Installing on Windows 11](docs/install-windows.md) -- manual, step-by-step setup per OS
 - [Verifying Your Installation](docs/verify.md)
+- [Operating RBT](docs/operations.md) -- updating, switching deployments, uninstalling, and collecting diagnostics for support
 - [Connecting GIS Clients to RBT](docs/gis-clients.md)
 - [Advanced: Deploying Without nginx](docs/advanced-deployment.md) -- for AWS ALB/CloudFront deployments
 - [Advanced: The EPSG:4087 Dual-TileserverGL Deployment](docs/deployment-4087.md) -- a second TileserverGL container serving EPSG:4087 MBTiles for sharper EPSG:4326 output

@@ -2,6 +2,9 @@
 .env
 __pycache__/
 *.pyc
+# A local virtualenv for the MapProxy config check and the docs build
+# (see CONTRIBUTING.md).
+.venv/
 site/
 site-docs/
 

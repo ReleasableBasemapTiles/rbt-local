@@ -9,7 +9,7 @@
 #
 #   docker compose -f docker-compose.yaml up -d
 #
-# See README.md for the ALB/CloudFront routing this replaces.
+# See docs/advanced-deployment.md for the ALB/CloudFront routing this replaces.
 
 # Log rotation, as in docker-compose.yaml (YAML anchors don't cross files).
 x-logging: &logging

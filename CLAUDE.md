@@ -51,7 +51,7 @@ git ls-files '*.json' | ( bad=0; while IFS= read -r f; do python3 -m json.tool "
 
 The `nginx -t` line reads the image tag from the Compose files, as CI does, so it keeps up with Dependabot's bumps. The JSON check runs in a `( ... )` subshell so its `exit` can't close an interactive zsh.
 
-The MapProxy config check and the docs build need Python packages. Keep the virtualenv outside the repo (`.venv` isn't gitignored):
+The MapProxy config check and the docs build need Python packages. Keep the virtualenv outside the repo, as here, or as `.venv/` inside it (gitignored):
 
 ```bash
 python3 -m venv ~/.venvs/rbt-local

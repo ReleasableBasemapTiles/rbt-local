@@ -1,9 +1,9 @@
 # This stack's config files must always check out with Unix (LF) line
 # endings, regardless of the cloning machine's git config (e.g. Windows'
 # common core.autocrlf=true) -- a uwsgi.ini saved with Windows (CRLF) line
-# endings prevents uWSGI from starting (see README.md "A note on Git line
-# endings", and deploy.ps1's -Prep step, which repairs clones made before
-# this file existed).
+# endings prevents uWSGI from starting (see "A note on Git line endings" in
+# docs/install-windows.md, and deploy.ps1's -Prep step, which repairs clones
+# made before this file existed).
 * text=auto
 
 *.ini       text eol=lf

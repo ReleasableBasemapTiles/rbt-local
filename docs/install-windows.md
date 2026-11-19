@@ -47,6 +47,8 @@ docker compose version
 
 Docker Desktop's installer adds you to the local `docker-users` group automatically; log out and back in if `docker` commands fail with a permissions error immediately after install.
 
+**Give Docker Desktop enough memory.** Its WSL2 engine can use only as much memory as `%UserProfile%\.wslconfig` allows, which defaults to half of your RAM -- too little for a 16GB laptop, since this stack recommends 16GB. Follow [Give WSL2 enough memory](#step-2-give-wsl2-enough-memory) in Option B (it applies to Docker Desktop too), then run `wsl --shutdown` and restart Docker Desktop.
+
 ### Step 3: Clone the repository
 
 ```powershell
@@ -60,11 +62,13 @@ Clone to a path on your `C:` drive (e.g. `C:\Users\<you>\rbt-local`) rather than
 
 Unlike Linux/WSL2, there's no `chown`/`chmod` step here -- Docker Desktop's Linux VM writes to bind-mounted Windows directories as whatever uid the container runs as, regardless of Windows ACLs, and Docker creates any runtime directory that's missing (such as `mapproxy/data`) on first start. Download the map data first with the deploy script's download step, which doesn't need an elevated PowerShell. It needs only the AWS CLI from Step 1 -- the data comes from a public mirror, so there are no credentials to set up (see [Get the Map Data](../README.md#get-the-map-data) in the main README). This repo's config files do need LF line endings for uWSGI to start (`.gitattributes` handles this automatically for new clones -- see [A note on Git line endings](#a-note-on-git-line-endings) below).
 
+Windows blocks unsigned scripts by default ("running scripts is disabled on this system"), so run `deploy.ps1` through `powershell -ExecutionPolicy Bypass -File`, which allows that one run only. (The `Set-ExecutionPolicy Bypass -Scope Process` line in Step 1 lasted only as long as that PowerShell window.)
+
 ```powershell
 # Download the map data into tileserver\data\3857\ (add -Use4087 for the
 # EPSG:4087 deployment), then start the RBT stack from the rbt-local directory
-.\deploy.ps1 -Download
-docker compose up -d
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Download
+docker compose up -d --wait
 
 # Check logs
 docker compose logs -f
@@ -72,6 +76,8 @@ docker compose logs -f
 # Stop the instance
 docker compose down --remove-orphans
 ```
+
+`--wait` makes `docker compose up` wait until every service passes its health check, and fail if one doesn't. TileserverGL can take a few minutes to open the map data.
 
 ## Option B: WSL2
 
@@ -121,16 +127,18 @@ Open your WSL2 distribution (search "Ubuntu" in the Start menu) and run:
 sudo apt-get update;
 sudo apt-get install -y unzip ca-certificates curl gnupg lsb-release;
 sudo update-ca-certificates;
-curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
-    unzip awscliv2.zip && \
-    sudo ./aws/install;
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
+    unzip -qo awscliv2.zip && \
+    sudo ./aws/install --update && \
+    rm -rf aws awscliv2.zip;
 
 # Remove old Docker versions (if any exist)
 sudo apt-get remove docker docker-engine docker.io containerd runc;
 
 # Add Docker's official repository
 sudo mkdir -m 0755 -p /etc/apt/keyrings;
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg;
+# --batch --yes: overwrite the key without asking, so pasting this again works
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg;
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
   | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null;
@@ -168,9 +176,10 @@ Distributions that run systemd start Docker on every launch. Ubuntu installed wi
    ```bash
    sudo apt-get update
    sudo apt-get install -y unzip git
-   curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
-       unzip awscliv2.zip && \
-       sudo ./aws/install
+   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
+       unzip -qo awscliv2.zip && \
+       sudo ./aws/install --update && \
+       rm -rf aws awscliv2.zip
    ```
 
 ### Step 4: Clone into the WSL2 filesystem (not `/mnt/c/...`)
@@ -206,7 +215,10 @@ sudo chmod 775 nginx/cache
 # docker needs root: prefix its commands with sudo, or add yourself to the
 # docker group (root-equivalent access) with `sudo usermod -aG docker $USER`
 # and open a new WSL2 terminal. Docker Desktop's WSL integration needs neither.
-docker compose up -d
+# --wait makes it wait until every service passes its health check
+# (TileserverGL can take a few minutes to open the map data), and fail if one
+# doesn't.
+docker compose up -d --wait
 
 # Check logs
 docker compose logs -f

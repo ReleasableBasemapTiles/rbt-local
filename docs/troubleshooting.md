@@ -18,6 +18,16 @@ This means you need administrator privileges.
 - **Windows (native or WSL2)**: Make sure Docker Desktop is running (check the system tray) and has finished starting -- it can take a minute after launch. If you're using Docker Engine directly inside WSL2 instead of Docker Desktop, run `sudo service docker start`.
 - **Linux**: Try `sudo systemctl start docker`
 
+## "Port Is Already Allocated" or "Address Already in Use"
+
+`docker compose up` stops with `Bind for 0.0.0.0:8080 failed: port is already allocated` (or similar for 8081, 8082 or 8083) because something else on this machine already listens on that port.
+
+- **Find what is using it**:
+  - macOS/Linux: `lsof -nP -iTCP:8080 -sTCP:LISTEN`
+  - Windows (PowerShell): `Get-NetTCPConnection -LocalPort 8080 -State Listen | ForEach-Object { Get-Process -Id $_.OwningProcess }`
+- **If it is an earlier RBT run**: `docker ps` lists containers named `nginx`, `mapproxy` and `tileservergl` (their names are fixed, so two copies of this repository can't run at once). Run `docker compose down --remove-orphans` in the copy that started them, then deploy again.
+- **If it is another program**: give RBT a different port instead. Copy `.env.example` to `.env` and set `TILESERVER_PORT`, `MAPPROXY_PORT`, `NGINX_PORT` or `TILESERVER_4087_PORT` (see [.env.example](../.env.example)), then run the deploy again. On Linux, put the setting in `.env` rather than exporting it, because the deploy script runs Compose through `sudo`, which drops your shell's variables.
+
 ## `brew` Not Recognized, Right After `deploy.sh --init` (macOS)
 
 - **Solution**: Open a new Terminal window/tab so it picks up the `PATH` change Homebrew's installer made, or run `eval "$(/opt/homebrew/bin/brew shellenv)"` (Apple Silicon) / `eval "$(/usr/local/bin/brew shellenv)"` (Intel) in the current one.
@@ -49,6 +59,29 @@ nginx keeps each map image it serves for 30 days (see [Tile Caching](architectur
 
 - **Solution**: Run `./deploy.sh --refresh` (or `.\deploy.ps1 -Refresh`), adding `--4087`/`-Use4087` for the EPSG:4087 deployment: it restarts TileserverGL and empties nginx's cache. Browsers and GIS clients keep their own tile caches too -- reload without them (Ctrl+Shift+R in a browser, or clear QGIS's network cache under **Settings -> Options -> Network**).
 
+## The Disk Fills Up, or a Download Was Interrupted
+
+- **Check the free space**: `df -h .` on macOS/Linux, or `Get-PSDrive C` in PowerShell. The map data is hundreds of GB, and nginx's tile cache adds up to 10 GB. Inside WSL2, the whole distribution lives in one virtual disk that doesn't shrink on its own -- see [A note on disk space](install-windows.md#a-note-on-disk-space).
+- **Replacing a big file needs room for two copies.** The AWS CLI downloads into a temporary file next to the destination and renames it when the transfer finishes, so a re-download of `RBT.mbtiles` briefly needs space for the old and the new copy together. If there isn't enough, stop the stack (`docker compose down --remove-orphans`), delete the old file from `tileserver/data/3857/` (or `4087/`), and run `./deploy.sh --download` (`.\deploy.ps1 -Download`), which downloads whatever is missing.
+- **After an interrupted download**: the real file is only created when the transfer completes, so a partial download never replaces a good copy. It leaves a file named like `RBT.mbtiles.a1B2c3D4` in the same folder, which is safe to delete. Run the download step again; it starts that file over, since the AWS CLI can't resume.
+- **Reclaim Docker's own disk use**: `docker system df` shows what images and build cache use, and [Operating RBT](operations.md#uninstalling-and-reclaiming-disk) lists what each part of RBT takes.
+
+## A Deploy Stops with "Did Not Become Healthy"
+
+The deploy scripts start the stack with `docker compose up -d --wait --wait-timeout 600` and give up after 10 minutes. TileserverGL alone is allowed 3 minutes before its first health check counts, because it opens the MBTiles files at startup.
+
+- **Solution**: Run `docker compose ps` to see which service is unhealthy or restarting, then `docker compose logs --tail 50 <service>`. Common causes:
+  - `tileservergl` -- the MBTiles are missing or incomplete (see the sections on blank styles and interrupted downloads), or the container ran out of memory (`docker inspect -f '{{.State.OOMKilled}}' tileservergl` prints `true`; see the memory sections below).
+  - `mapproxy` -- it couldn't load its configuration (see the 502 section above), or hit the file-permission problem described under "`mapproxy` Container Exits".
+  - Any service -- a port conflict (see "Port Is Already Allocated" above).
+- Running the deploy again is safe once the cause is fixed.
+
+## Old Containers Are Still Running After Switching Deployments
+
+Going from the [EPSG:4087 stack](deployment-4087.md) to the default one leaves `tileservergl4087` running, and going to a no-nginx deployment leaves `nginx` running. Compose calls these orphans: containers from this project that the files you named no longer define.
+
+- **Solution**: `docker compose down --remove-orphans`, then deploy the stack you want. See [Switching deployments](operations.md#switching-deployments).
+
 ## The 4087 Stack Is Up, but EPSG:4326 Tiles Look Unchanged
 
 This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../docker-compose.4087.yaml)). MapProxy loads the file named by the `MAPPROXY_CONFIG` environment variable, which `docker-compose.4087.yaml` sets to [mapproxy.4087.yaml](../mapproxy/config/mapproxy.4087.yaml). Without it, MapProxy loads the regular `mapproxy.yaml`: containers stay healthy and nothing errors, but the EPSG:4326 caches keep reprojecting from EPSG:3857 and `tileservergl4087` never receives requests from MapProxy.
@@ -63,14 +96,28 @@ This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../doc
   #         reading: /mapproxy/config/mapproxy.yaml       (the file it builds on)
   ```
 
+  On native Windows PowerShell, the same checks are:
+
+  ```powershell
+  docker exec mapproxy printenv MAPPROXY_CONFIG
+  docker logs mapproxy 2>&1 | Select-String 'reading: .*' | ForEach-Object { $_.Matches.Value } | Sort-Object -Unique
+  ```
+
   If `printenv` prints nothing, the stack was started without `docker-compose.4087.yaml`: deploy with `-f docker-compose.yaml -f docker-compose.4087.yaml` (or `--4087`/`-Use4087`). If it prints the path but MapProxy only read `mapproxy.yaml`, the `mapproxy` image predates `MAPPROXY_CONFIG`: rebuild it with `docker compose ... build mapproxy` and recreate the container (the deploy scripts always rebuild it).
 
   Then confirm MapProxy is actually querying the second tileserver:
 
   ```bash
-  curl -fsS "http://localhost:${MAPPROXY_PORT:-8081}/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o /dev/null
+  curl -fsS "http://localhost:8081/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o /dev/null
   docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
   ```
+
+  ```powershell
+  curl.exe -fsS "http://localhost:8081/wmts/rbt_topo_4326/geodetic/2/1/1.png" -o NUL
+  docker logs --tail 20 tileservergl4087   # expect a /styles/RBT-TOPO/512/... request in the access log
+  ```
+
+  (Both use the default MapProxy port, 8081; use your `MAPPROXY_PORT` if you changed it.)
 
 ## `mapproxy` Container Exits, or Can't Write Its Lock Files
 
@@ -92,6 +139,12 @@ Docker Desktop uses the WSL2 platform's shared utility VM for its engine on Wind
 ## macOS: Docker Desktop Runs Out of Memory
 
 - **Solution**: Open Docker Desktop's **Settings -> Resources -> Advanced** and increase the memory limit, then apply and restart the engine.
+
+## MapProxy Uses Too Much Memory
+
+MapProxy runs as a pool of uWSGI worker processes, sized by `UWSGI_PROCESSES` (8 by default) and `UWSGI_CHEAPER` (4 by default: how many keep running while idle; the rest start under load). [`mapproxy/config/uwsgi.ini`](../mapproxy/config/uwsgi.ini) restarts a worker once it holds more than 2 GB, so the worst case is about `UWSGI_PROCESSES` x 2 GB (16 GB with the defaults).
+
+- **Solution**: On a smaller machine, lower both in `.env` -- `UWSGI_CHEAPER` must stay below `UWSGI_PROCESSES`, or uWSGI won't start. For example, `UWSGI_PROCESSES=4` with `UWSGI_CHEAPER=2`. See [.env.example](../.env.example), then recreate the container with `docker compose up -d`.
 
 ## TileserverGL Uses Too Much Memory, or Renders Slowly Under Load
 
