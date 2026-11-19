@@ -7,7 +7,9 @@ misses the others fails CI instead of surfacing in a user's deploy:
 
 - the tileserver-gl pin, and the x-logging block, across the Compose files
 - MapProxy's version across Dockerfile.mapproxy, Compose, the image workflow
-  and every place the docs repeat it
+  (which reads it from the Dockerfile) and every place the docs repeat it
+- the MapProxy image's inputs: the conda lock files match environment.yml, the
+  Dockerfile's COPY lines match .dockerignore and the image workflow's paths
 - the set of styles across tileserver/styles/, config.json, sync-styles.yml
   and both MapProxy configs, and the "six styles" / "18 layers" counts in docs
 - the style.json rules TileserverGL depends on (sources, sprite, glyphs)
@@ -31,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 import yaml
+from mapproxy_lock import spec_hash, stamped_hash
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -144,7 +147,6 @@ MAPPROXY_VERSION_PATTERNS = (
     re.compile(rf"(?:rbt-mapproxy|rbt-local/mapproxy|mapproxy/mapproxy):({VERSION})"),
     re.compile(rf"MapProxy(?:==| )({VERSION})"),
     re.compile(rf"MAPPROXY_VERSION=({VERSION})"),
-    re.compile(rf"type=raw,value=({VERSION})"),
 )
 # On a line about MapProxy, a bare version in quotes or backticks is its version.
 QUOTED_VERSION = re.compile(rf"[`\"]({VERSION})[`\"]")
@@ -165,12 +167,21 @@ def mapproxy_version(problems: list[str]) -> None:
             f"docker-compose.yaml: the mapproxy image is {image}, but Dockerfile.mapproxy "
             f"installs {expected}"
         )
+    # The published tag is read from the Dockerfile, so it can't be left behind
+    # by a bump. A literal tag in the workflow would bring that risk back.
+    workflow = ".github/workflows/mapproxy-image.yml"
     find_one(
-        rf"type=raw,value=({VERSION})",
-        ".github/workflows/mapproxy-image.yml",
+        r"(MAPPROXY_VERSION=//p' Dockerfile\.mapproxy)",
+        workflow,
         problems,
-        "the published image tag",
+        "the step that reads the image tag from Dockerfile.mapproxy",
     )
+    literal = re.search(rf"type=raw,value={VERSION}", read(workflow))
+    if literal:
+        problems.append(
+            f"{workflow}: tags the image {literal.group(0).removeprefix('type=raw,value=')} literally; "
+            "use the version read from Dockerfile.mapproxy"
+        )
 
     files = [
         *doc_files(),
@@ -190,6 +201,129 @@ def mapproxy_version(problems: list[str]) -> None:
                         f"{rel}:{number}: mentions MapProxy {version}, but Dockerfile.mapproxy "
                         f"installs {expected}"
                     )
+
+
+# -- The MapProxy image's inputs -----------------------------------------------
+
+# platform -> lock file. scripts/lock-mapproxy.sh writes them; Dockerfile.mapproxy
+# installs the one for the CPU it builds on.
+LOCK_FILES = {
+    "linux-64": "mapproxy/conda-linux-64.lock",
+    "linux-aarch64": "mapproxy/conda-linux-aarch64.lock",
+}
+# One line of an explicit lock file: the package's URL, then its MD5 after a #.
+CONDA_URL = re.compile(
+    r"^https://conda\.anaconda\.org/conda-forge/(?P<subdir>[^/]+)/"
+    r"(?P<name>.+)-(?P<version>[^-]+)-[^-]+\.(?:conda|tar\.bz2)#(?P<md5>[0-9a-f]{32})$"
+)
+# Packages whose version decides how the image behaves. The two platforms'
+# lock files must agree on these; other packages can differ, since conda-forge
+# builds some of them per platform at different times.
+KEY_PACKAGES = ("python", "proj", "gdal", "geos", "pyproj", "uwsgi")
+MIN_PROJ = (9, 8)  # ellipsoidal EPSG:4087; the Dockerfile asserts it too
+
+
+def parse_lock(rel: str, platform: str, problems: list[str]) -> dict[str, str]:
+    """Package name -> version for one lock file; malformed lines are problems."""
+    packages: dict[str, str] = {}
+    if not (ROOT / rel).is_file():
+        problems.append(f"{rel}: missing; generate it with scripts/lock-mapproxy.sh")
+        return packages
+    explicit = False
+    for number, line in enumerate(read(rel).splitlines(), 1):
+        if line == "@EXPLICIT":
+            explicit = True
+        elif line and not line.startswith("#"):
+            match = CONDA_URL.match(line)
+            if not match or match["subdir"] not in (platform, "noarch"):
+                problems.append(f"{rel}:{number}: not a {platform} conda-forge package URL with an MD5: {line}")
+            else:
+                packages[match["name"]] = match["version"]
+    if not explicit:
+        problems.append(f"{rel}: has no @EXPLICIT line, so micromamba would solve instead of installing it as is")
+    return packages
+
+
+@rule
+def mapproxy_lock_files(problems: list[str]) -> None:
+    """The conda lock files are current for environment.yml and sound enough to build from.
+
+    A lock file that no longer matches environment.yml would keep shipping the
+    old packages while the file that reads as their source says otherwise."""
+    expected = spec_hash(ROOT / "mapproxy" / "environment.yml")
+    locked: dict[str, dict[str, str]] = {}
+    for platform, rel in LOCK_FILES.items():
+        locked[platform] = parse_lock(rel, platform, problems)
+        if not (ROOT / rel).is_file():
+            continue
+        stamp = stamped_hash(ROOT / rel)
+        if stamp is None:
+            problems.append(f"{rel}: has no environment.yml fingerprint; regenerate with scripts/lock-mapproxy.sh")
+        elif stamp != expected:
+            problems.append(
+                f"{rel}: was generated from a different mapproxy/environment.yml; "
+                "regenerate with scripts/lock-mapproxy.sh"
+            )
+        for package in ("python", "pyproj", "proj", "uwsgi", "pip"):
+            if package not in locked[platform]:
+                problems.append(f"{rel}: doesn't lock {package}, which the image needs")
+        proj = locked[platform].get("proj")
+        if proj and tuple(int(p) for p in proj.split(".")[:2]) < MIN_PROJ:
+            problems.append(f"{rel}: locks proj {proj}, but EPSG:4087 needs {'.'.join(map(str, MIN_PROJ))} or later")
+
+    for package in KEY_PACKAGES:
+        same(
+            f"the locked {package} version",
+            {platform: versions.get(package) for platform, versions in locked.items()},
+            problems,
+        )
+
+    # micromamba reads the lock files line by line; a trailing CR would end up
+    # in every URL and checksum, so they must check out with LF on Windows too.
+    find_one(r"^(\*\.lock\s+text eol=lf)$", ".gitattributes", problems, "the *.lock eol=lf rule")
+    for rel in LOCK_FILES.values():
+        if f"Join-RepoPath '{rel}'" not in read("deploy.ps1"):
+            problems.append(f"deploy.ps1: Repair-ConfigLineEndings doesn't repair {rel}")
+
+
+def dockerfile_copy_sources() -> list[str]:
+    """What Dockerfile.mapproxy COPYs into the image, from the build context."""
+    sources: list[str] = []
+    for line in read("Dockerfile.mapproxy").replace("\\\n", " ").splitlines():
+        words = line.split()
+        if words[:1] == ["COPY"]:
+            sources += [w for w in words[1:] if not w.startswith("--")][:-1]
+    return sources
+
+
+@rule
+def mapproxy_image_inputs(problems: list[str]) -> None:
+    """Each file Dockerfile.mapproxy COPYs is in .dockerignore's allowlist and starts the image workflow.
+
+    Merging a change to an image input publishes the image the charts repo
+    deploys, so an input the workflow doesn't watch would publish late, and
+    one the allowlist hides would fail the build."""
+    sources = dockerfile_copy_sources()
+    if not sources:
+        problems.append("Dockerfile.mapproxy: can't find any COPY lines; update check-sync.py")
+        return
+
+    allowed = [line[1:].strip() for line in read(".dockerignore").splitlines() if line.startswith("!")]
+    for source in sources:
+        if source not in allowed:
+            problems.append(f".dockerignore: doesn't allow {source}, which Dockerfile.mapproxy COPYs")
+    for entry in allowed:
+        if entry not in sources:
+            problems.append(f".dockerignore: allows {entry}, which Dockerfile.mapproxy no longer COPYs")
+
+    workflow_path = ".github/workflows/mapproxy-image.yml"
+    workflow = load_yaml(workflow_path)
+    triggers = workflow.get("on", workflow.get(True))  # YAML 1.1 reads a bare `on` as True
+    inputs = {"Dockerfile.mapproxy", ".dockerignore", workflow_path, *sources}
+    for event in ("push", "pull_request"):
+        watched = set(triggers[event]["paths"])
+        for path in sorted(inputs - watched):
+            problems.append(f"{workflow_path}: the {event} trigger doesn't watch {path}, an image input")
 
 
 # -- Styles --------------------------------------------------------------------

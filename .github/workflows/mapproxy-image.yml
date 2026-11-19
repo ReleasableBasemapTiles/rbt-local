@@ -3,10 +3,20 @@
 #
 # Triggers on changes to the image inputs, and on workflow_dispatch so a
 # branch can publish before merge. linux/amd64 + linux/arm64 (same pair
-# the rest of this stack documents). This repo is private, so the package
-# is private -- OpenShift/Kubernetes needs imagePullSecrets to pull it.
+# the rest of this stack documents). Whether OpenShift/Kubernetes needs
+# imagePullSecrets to pull the package is set by the package's own visibility
+# on GitHub (Packages -> Package settings), not by this repo being public.
 # Pull requests that change the image inputs only build it, for
 # linux/amd64, which also runs the Dockerfile's smoke tests.
+#
+# The image inputs are the files Dockerfile.mapproxy COPYs, plus the
+# Dockerfile, .dockerignore (it decides what the build can see) and this file.
+# mapproxy/environment.yml is deliberately not one: the image installs the
+# conda packages in mapproxy/conda-*.lock, so editing environment.yml changes
+# nothing that ships until the lock files are regenerated -- which
+# check-sync.py makes a dependency change do -- and a comment edit must not
+# republish the image. check-sync.py also keeps these paths in step with the
+# Dockerfile's COPY lines.
 #
 #   gh workflow run mapproxy-image.yml
 
@@ -17,13 +27,17 @@ on:
     branches: [main]
     paths:
       - Dockerfile.mapproxy
-      - mapproxy/environment.yml
+      - .dockerignore
+      - mapproxy/conda-linux-64.lock
+      - mapproxy/conda-linux-aarch64.lock
       - mapproxy/docker/app.py
       - .github/workflows/mapproxy-image.yml
   pull_request:
     paths:
       - Dockerfile.mapproxy
-      - mapproxy/environment.yml
+      - .dockerignore
+      - mapproxy/conda-linux-64.lock
+      - mapproxy/conda-linux-aarch64.lock
       - mapproxy/docker/app.py
       - .github/workflows/mapproxy-image.yml
   workflow_dispatch:
@@ -71,15 +85,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # 8.1.0 is the tag the Helm chart deploys (charts/rbt/values.yaml), so
-      # only main moves it; a branch run publishes its branch and sha tags.
+      # The version tag comes from the Dockerfile, so bumping MapProxy is a
+      # one-line change that can't leave this tag behind.
+      - name: Read the MapProxy version
+        id: version
+        run: |
+          version="$(sed -n 's/^ARG MAPPROXY_VERSION=//p' Dockerfile.mapproxy)"
+          if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Could not read ARG MAPPROXY_VERSION from Dockerfile.mapproxy (got '$version')"
+            exit 1
+          fi
+          echo "mapproxy=$version" >> "$GITHUB_OUTPUT"
+
+      # The version tag (8.1.0 today) is the one the Helm chart deploys
+      # (charts/rbt/values.yaml), so only main moves it; a branch run
+      # publishes its branch and sha tags.
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=8.1.0,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.mapproxy }},enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
             type=ref,event=branch
