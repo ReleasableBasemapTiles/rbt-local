@@ -1,5 +1,19 @@
 # Troubleshooting
 
+## Start Here: Run the Check
+
+Before looking up an error below, run the deploy script's read-only check. It changes nothing, and it names most of the problems on this page -- Docker not running, or too old, too little memory or disk space, a port that something else holds, missing or out-of-date map data, a service that isn't healthy -- with one `PASS`, `WARN` or `FAIL` line each:
+
+```bash
+./deploy.sh --check
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Check
+```
+
+Add the flags you deployed with (`--4087` and/or `--no-nginx`; `-Use4087` and/or `-NoNginx` on Windows) so it checks the same deployment. Fix the `FAIL` lines first, then run it again until none are left. The sections below explain each problem in more detail, and [Verifying Your Installation](verify.md) shows what a healthy stack looks like.
+
 ## "Command not found" Error
 
 This usually means the software isn't installed or isn't in your system's PATH.
@@ -200,5 +214,5 @@ Restart TileserverGL after editing (`docker compose restart tileservergl`, plus 
 
 ## Where to Get Help
 
-- Check the sections above, and [Connecting GIS Clients to RBT](gis-clients.md#troubleshooting-gis-client-connections) if the issue is specific to a GIS client connection
-- Contact the RBT program manager for support
+- Run the check at the [top of this page](#start-here-run-the-check), and the sections above, and [Connecting GIS Clients to RBT](gis-clients.md#troubleshooting-gis-client-connections) if the issue is specific to a GIS client connection
+- Contact the RBT program manager for support, and send the output of the check plus the details in [Operating RBT](operations.md#collecting-diagnostics-for-support)

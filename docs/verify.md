@@ -2,6 +2,26 @@
 
 Run these checks from the machine running Docker -- Terminal on macOS/Linux, inside WSL2 on Windows Option B, or directly in PowerShell on native Windows Option A. Each command's expected result is listed underneath it. The `bash` examples below work as-is on macOS, Linux, and WSL2; on native Windows PowerShell, run the same `docker compose`/`curl.exe` commands (PowerShell 5.1 aliases bare `curl` to `Invoke-WebRequest`, which takes different flags, so use `curl.exe` explicitly there).
 
+## The quick way: let the script check
+
+The deploy script has a read-only step that runs most of the checks below for you, and prints one `PASS`, `WARN` or `FAIL` line for each. It changes nothing, so it is safe to run whenever you are unsure:
+
+```bash
+./deploy.sh --check
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Check
+```
+
+Add the flags you deployed with (`--4087` and/or `--no-nginx`; `-Use4087` and/or `-NoNginx` on Windows) so it checks the same deployment.
+
+Expect, for a healthy stack: `PASS` for each service (`nginx`, `mapproxy`, `tileservergl`, plus `tileservergl4087` in the EPSG:4087 deployment) running and healthy, `PASS` for nginx's `/healthz` and for the WMTS capabilities document, and the line `Check finished: ... 0 failed` (exit status 0). A `WARN` is worth reading but doesn't fail the check: a map data file that the mirror has replaced with a newer one, say, or a service whose health check is still starting.
+
+The check does not draw a tile, so it can't tell you the styles render, and it doesn't see what an nginx cache hit looks like. The commands below do, and are also what to run to see the real output behind a `FAIL`.
+
+## The checks by hand
+
 ```bash
 docker compose ps
 ```

@@ -33,6 +33,8 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 - **The ports are free.** RBT publishes ports 8080, 8081 and 8082 (plus 8083 for the [EPSG:4087 deployment](docs/deployment-4087.md)). If something already uses one, set a different port in `.env` (step 2) rather than stopping that program.
 - **Your machine is big enough.** 16GB of RAM and 8 cores are recommended. On Windows and macOS, Docker Desktop caps its own memory below the machine's total, so see [Installing on Windows 11](docs/install-windows.md) and [Installing on macOS](docs/install-macos.md) for raising it.
 
+Step 3 below has the deploy script check the ports, the disk space and Docker's memory for you.
+
 1. **Install Git** if you don't already have it (most Macs and Linux systems do; on Windows 11 try `winget install Git.Git`, or see the per-OS guide below), then clone this repository and open a terminal inside it:
 
    ```bash
@@ -42,7 +44,17 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 
 2. **Optionally, copy `.env.example` to `.env`** to change ports, bind address, or other settings. You don't need it for the map data.
 
-3. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data from the public mirror (no credentials needed -- see [How the deploy scripts download it](#how-the-deploy-scripts-download-it)), and starts RBT. No other manual steps are required.
+3. **Optionally, check your machine first.** The `--check` step only reads: it changes nothing, installs nothing and downloads nothing. It needs no administrator rights on Windows either.
+
+   ```bash
+   ./deploy.sh --check
+   ```
+
+   On Windows, use `powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Check`.
+
+   It prints one `PASS`, `WARN` or `FAIL` line each for Docker and its memory, free disk space, the ports, and the map data, and ends with an error status if anything `FAIL`s. On a machine you haven't set up yet, expect `FAIL` for what step 4 supplies -- Docker, if it isn't installed, and the map data -- and read the other lines: a port that something else holds, or too little disk or memory, is worth fixing before a download that takes hours. You can run it again at any time, and [Verifying Your Installation](docs/verify.md) shows what a healthy stack looks like.
+
+4. **Run the deploy script for your computer.** Each one installs every remaining prerequisite, downloads the map data from the public mirror (no credentials needed -- see [How the deploy scripts download it](#how-the-deploy-scripts-download-it)), and starts RBT. No other manual steps are required.
 
    **macOS or Linux:**
 
@@ -58,9 +70,9 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 
    **Windows 11 with WSL2**: use `./deploy.sh` inside your WSL2 distribution, as on Linux. Read [Option B in Installing on Windows 11](docs/install-windows.md#option-b-wsl2) first: clone into your Linux home directory (`~`), not under `/mnt/c`, and raise WSL2's memory limit.
 
-4. **Open the style previews** at `http://localhost:8082/tileservergl/` in a browser. If you see the six RBT styles, RBT is working. [Verifying Your Installation](docs/verify.md) has the full checklist, and the script's last lines print the commands for viewing logs and stopping RBT.
+5. **Open the style previews** at `http://localhost:8082/tileservergl/` in a browser. If you see the six RBT styles, RBT is working. [Verifying Your Installation](docs/verify.md) has the full checklist, and the script's last lines print the commands for viewing logs and stopping RBT.
 
-Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, or the deployment options below. Each run starts by printing which steps it will perform. `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) only choose the deployment: on their own they still run every step, so pair them with a step, such as `./deploy.sh --4087 --deploy`.
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, `--check`/`-Check` to see what is wrong without changing anything, or the deployment options below. Each run starts by printing which steps it will perform. `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) only choose the deployment: on their own they still run every step, so pair them with a step, such as `./deploy.sh --4087 --deploy`.
 
 Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 

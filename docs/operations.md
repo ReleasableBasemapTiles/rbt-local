@@ -97,6 +97,7 @@ When you contact the RBT program manager, these details answer most of the first
 ```bash
 git rev-parse --short HEAD               # which version of this repository you have
 git status --short                       # any files you've changed
+./deploy.sh --check > rbt-check.txt 2>&1 # what the deploy script finds wrong (read-only; add --4087 and/or --no-nginx)
 docker version
 docker compose version
 docker compose ps                        # which services run, and whether they're healthy
@@ -107,6 +108,7 @@ docker compose logs --no-color --tail 200 > rbt-logs.txt
 ```powershell
 git rev-parse --short HEAD
 git status --short
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Check | Out-File -Encoding utf8 rbt-check.txt
 docker version
 docker compose version
 docker compose ps
@@ -114,4 +116,4 @@ Get-ChildItem tileserver\data\3857, tileserver\data\4087 | Format-Table Name, Le
 docker compose logs --no-color --tail 200 | Out-File -Encoding utf8 rbt-logs.txt
 ```
 
-Attach `rbt-logs.txt` and the output of the other commands. Two cautions: the logs include the IP addresses of the clients that requested tiles, and `.env` may name a private bucket, so share them only as your organization's rules allow, and check `.env` before sending it.
+Attach `rbt-check.txt`, `rbt-logs.txt` and the output of the other commands. Two cautions: the logs include the IP addresses of the clients that requested tiles, and `.env` may name a private bucket, so share them only as your organization's rules allow, and check `.env` before sending it.

@@ -70,6 +70,7 @@ The stack only becomes healthy with the MBTiles in `tileserver/data/3857/` (and 
 ```bash
 ./deploy.sh --deploy              # build, pull, start, wait for healthy; add --4087 and/or --no-nginx for the other stacks
 ./deploy.sh --refresh             # after editing a style or replacing MBTiles; add the running stack's flags (--4087)
+./deploy.sh --check               # read-only PASS/WARN/FAIL report on the machine and the stack; exits 1 on a FAIL
 docker compose logs -f mapproxy
 docker compose down --remove-orphans
 ```
@@ -84,6 +85,7 @@ Plain `docker compose` means the default stack, unless `.env` sets `COMPOSE_FILE
   - `--perm` runs sudo chown.
   - A run with no step flag does all of the above. The modifiers `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) are not step flags, so `./deploy.sh --4087` on its own is a full run. Always pair a modifier with a step: `./deploy.sh --4087 --deploy`.
   - `--deploy`, `--refresh` and `docker compose` are fine when the task needs a running stack. On Linux they run through sudo too.
+  - `--check`/`-Check` only reads, so it is fine to run whenever it helps (with the stack's flags, such as `--4087`). With `aws` installed it makes anonymous `head-object` requests to the mirror, and with the engine reachable only through sudo on Linux it runs Docker through sudo.
 - **The MapProxy image inputs**: `Dockerfile.mapproxy`, `mapproxy/environment.yml`, `mapproxy/docker/app.py` and `.github/workflows/mapproxy-image.yml`. Merging a change to any of them rebuilds and pushes `ghcr.io/releasablebasemaptiles/rbt-local/mapproxy:8.1.0` and `:latest`, which the charts repo deploys. `environment.yml` isn't fully pinned, so even a comment-only edit ships whatever conda-forge resolves that day. Their stale Helm chart comments are known and were left alone on purpose (commit ef05eb4).
 - **`tileserver/styles/RBT-*/`**: owned by ReleasableBasemapTiles/styles. The weekly Sync styles pull request replaces local edits, so style changes belong upstream.
 - **Anything outward-facing**: pushing, opening pull requests, `v*` tags and GitHub Releases, and `gh workflow run` (dispatching `mapproxy-image.yml` publishes an image -- as `8.1.0` and `latest` when run on `main` -- and `sync-styles.yml` opens a pull request).
@@ -95,9 +97,9 @@ These facts are stated in more than one place. When you change one, grep for the
 | If you change | Also update |
 | --- | --- |
 | A `deploy.sh` flag, step or behavior | `deploy.ps1` (`--4087` is `-Use4087`, `--no-nginx` is `-NoNginx`, and `--perm`/`-Prep` are different steps), both usage texts, the manual steps in `docs/install-*.md`, and every other mention in README, `docs/` and config comments (`git grep -n -e --no-nginx -e -NoNginx`, say) |
-| A port, service name or path prefix | The Compose files (ports and healthchecks), `.env.example`, `uwsgi.ini` (port 5000), `nginx.conf`, MapProxy source URLs, both scripts (usage texts, service lists, closing hints), the `--add-host` names in `ci.yml`, CONTRIBUTING and this file, README "Endpoints", and `docs/verify.md`, `gis-clients.md`, `advanced-deployment.md`, `deployment-4087.md`, `troubleshooting.md`, `architecture.md` (diagrams included) |
+| A port, service name or path prefix | The Compose files (ports and healthchecks), `.env.example`, `uwsgi.ini` (port 5000), `nginx.conf`, MapProxy source URLs, both scripts (usage texts, service lists, closing hints, and `--check`'s port, container and endpoint lists), the `--add-host` names in `ci.yml`, CONTRIBUTING and this file, README "Endpoints", and `docs/verify.md`, `gis-clients.md`, `advanced-deployment.md`, `deployment-4087.md`, `troubleshooting.md`, `architecture.md` (diagrams included) |
 | The set of styles | The style directory, `config.json`, `mapproxy.yaml` (a source, three caches, three layers), `mapproxy.4087.yaml` (a 4087 source and cache, and the 4326 cache's source), `sync-styles.yml`'s sparse-checkout list, and every style list or "six styles"/"18 layers" count in README, `gis-clients.md`, `verify.md`, `deployment-4087.md`, `troubleshooting.md` |
-| nginx's cache policy (30 days, 10 GB, what's cached) | `docs/architecture.md` "Tile Caching", `gis-clients.md`, `troubleshooting.md`, README "Requirements" |
+| nginx's cache policy (30 days, 10 GB, what's cached) | `docs/architecture.md` "Tile Caching", `gis-clients.md`, `troubleshooting.md`, README "Requirements", and the free-disk reserve `--check` wants (`MIN_FREE_BYTES_WITH_NGINX` in `deploy.sh`, `$script:MinFreeBytesWithNginx` in `deploy.ps1`: the cache size plus the MapProxy image) |
 | MapProxy's WMS `srs` list | `docs/architecture.md`, `docs/gis-clients.md` |
 | An image pin | `tileserver-gl` is pinned in both `docker-compose.yaml` and `docker-compose.4087.yaml` (keep them equal). The nginx tag is also in CONTRIBUTING's `nginx -t` line. MapProxy's version is `ARG MAPPROXY_VERSION` in `Dockerfile.mapproxy`, where CI reads it, and it's repeated in the `rbt-mapproxy:8.1.0` image name in `docker-compose.yaml`, the GHCR tag in `mapproxy-image.yml` (which the charts repo deploys), CONTRIBUTING, and the `8.1.0` mentions in this file and CONTEXT.md |
 | The public mirror | `PUBLIC_S3_*` in `deploy.sh`, `$script:PublicS3*` in `deploy.ps1`, README "Get the Map Data" |
@@ -144,6 +146,8 @@ Each of these is explained in a comment where it lives. Keep those comments.
 - `.env` is parsed the way Compose parses it: quotes are stripped, an unquoted value ends at the first ` #`. Keep `load_env_file` and `Import-DotEnv` in step with each other.
 - A download is bracketed by checks: partial `<name>.<8 hex>` files are removed, the drive must have the object's `ContentLength` free, and the finished file must be that size. When the mirror's metadata can't be read, warn and skip those checks; never block a download that would have worked.
 - The checks that need no Docker (`require_mbtiles`, `check_uwsgi_settings`) run before anything slow in the deploy step, so a mistake fails in seconds.
+- `--check` changes nothing and is never part of a run with no step flags. It runs last, so `--deploy --check` reports on what it just deployed. It reports with `check_pass`/`check_warn`/`check_fail` rather than `die`, finishes every check, and exits 1 only at the end. It reads the mirror with short timeouts, so an offline machine gets a warning in seconds. A check-only run skips the up-front deploy warnings (its report has the same findings) and uses sudo only when the user can't reach Docker without it.
+- Output colors go through `paint`, which prints plain text unless the stream is a terminal and `NO_COLOR` is unset, so `./deploy.sh --check > rbt-check.txt` holds no escape codes. Don't print raw escape sequences.
 - Every step must stay safe to re-run, and the script must stay shellcheck-clean.
 
 **deploy.ps1**

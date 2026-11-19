@@ -18,6 +18,7 @@ param(
     [switch]$Prep,
     [switch]$Refresh,
     [switch]$Deploy,
+    [switch]$Check,
     [switch]$Force,
     [switch]$NoNginx,
     [switch]$Use4087,
@@ -36,9 +37,9 @@ function Show-Usage {
 deploy.ps1 - Bootstrap a native Windows 11 host and deploy the RBT Docker Compose stack.
 
 With no step switches, -Init, -Download, -Prep, and -Deploy run in order
-(plus -Refresh whenever -Download fetched new data). Pass one or more step
-switches to run only those steps (still in the order listed here, regardless
-of the order given on the command line):
+(plus -Refresh whenever -Download fetched new data). -Check is never part of
+that. Pass one or more step switches to run only those steps (still in the
+order listed here, regardless of the order given on the command line):
 
   -Init      Install prerequisites via Chocolatey: AWS CLI v2, Git, the WSL2
              platform (enabled with no Linux distribution -- Docker
@@ -64,10 +65,20 @@ of the order given on the command line):
              service doesn't become healthy. --remove-orphans also removes
              containers left over from a different deployment, such as
              tileservergl4087 after leaving the -Use4087 stack.
+  -Check     Report on this machine and the selected stack without
+             changing anything. One PASS, WARN or FAIL line each for: the
+             tools and their versions, the Docker engine and its memory,
+             the map data (and whether the mirror has a newer copy), free
+             disk space, the published ports, the running services against
+             the switches given, and -- if the stack is running -- /healthz
+             and the WMTS capabilities. Exits 1 if anything FAILs. It runs
+             after any other selected steps, so `-Deploy -Check` deploys and
+             then reports. On a machine that hasn't been set up yet it FAILs
+             on what -Init and -Download would provide.
 
 The modifiers below are not steps, so on their own they still mean "run every
 step" -- including installing prerequisites (which needs an elevated session)
-and downloading map data. Pair them with a step, such as -Deploy.
+and downloading map data. Pair them with a step, such as -Deploy or -Check.
 
   -Force     Re-download mbtiles even if already present (only relevant
              together with -Download, or with no step switches).
@@ -92,6 +103,8 @@ Usage:
   .\deploy.ps1 -Download -Prep        # just refresh data + runtime dirs
   .\deploy.ps1 -Refresh               # reload styles/MBTiles, purge cache
   .\deploy.ps1 -Deploy                # just (re)start the stack
+  .\deploy.ps1 -Check                 # read-only: what is missing or wrong?
+  .\deploy.ps1 -Use4087 -Check        # same, for the EPSG:4087 stack
   .\deploy.ps1 -Force                 # full run, force re-download
   .\deploy.ps1 -NoNginx               # full run, skip the local nginx
   .\deploy.ps1 -Use4087               # full run, EPSG:4087 dual-tileserver stack
@@ -99,8 +112,8 @@ Usage:
 
 Run this from an elevated (Administrator) PowerShell only when using -Init
 (or with no step switches, since -Init then runs too) -- installing software
-and enabling the WSL2 platform both need it. -Download, -Prep, -Refresh, and
--Deploy do not need elevation.
+and enabling the WSL2 platform both need it. -Download, -Prep, -Refresh,
+-Deploy, and -Check do not need elevation.
 
 Where the data comes from: by default, each MBTiles file is downloaded
 anonymously from the public RBT mirror (an S3-compatible endpoint, see
@@ -504,20 +517,42 @@ function Get-S3SourceArgs {
     return @()
 }
 
+# Works out where one MBTiles file comes from: the S3_BUCKET_* variable named
+# by $BucketEnvVarName when it is set, else the public mirror's $PublicPrefix.
+# Returns Prefix (the s3:// prefix), AwsArgs (from Get-S3SourceArgs) and
+# Source (a description for messages).
+function Resolve-S3Source {
+    param([string]$BucketEnvVarName, [string]$PublicPrefix)
+    $bucketValue = [System.Environment]::GetEnvironmentVariable($BucketEnvVarName)
+    if (-not [string]::IsNullOrWhiteSpace($bucketValue)) {
+        return [pscustomobject]@{
+            Prefix  = ConvertTo-S3Uri $bucketValue
+            AwsArgs = @(Get-S3SourceArgs -Public $false)
+            Source  = $BucketEnvVarName
+        }
+    }
+    return [pscustomobject]@{
+        Prefix  = $PublicPrefix
+        AwsArgs = @(Get-S3SourceArgs -Public $true)
+        Source  = "the public mirror at $($script:PublicS3Endpoint)"
+    }
+}
+
 # Returns [pscustomobject]@{ LastModifiedUtc = [datetime]; Size = [long] }
 # for an S3 object, or $null if it can't be read -- e.g. missing object, or
 # an IAM policy that allows GetObject but not this HeadObject call. One call
 # answers both "is the mirror's copy newer?" and "how much room does the
 # download need, and did all of it arrive?". $AwsArgs comes from
-# Get-S3SourceArgs.
+# Get-S3SourceArgs; $ExtraArgs go to `aws` as well (-Check passes timeouts, so
+# an offline machine isn't left waiting).
 function Get-RemoteObjectInfo {
-    param([string]$RemoteUri, [string[]]$AwsArgs)
+    param([string]$RemoteUri, [string[]]$AwsArgs, [string[]]$ExtraArgs = @())
     # A failed head-object prints to stderr, which 2>$null would make fatal
     # under 'Stop' on Windows PowerShell 5.1 -- see Test-DockerEngineRunning.
     $ErrorActionPreference = 'Continue'
     $bucket = Get-S3BucketName $RemoteUri
     $key = Get-S3ObjectKey $RemoteUri
-    $info = aws @AwsArgs s3api head-object --bucket $bucket --key $key --query '[LastModified, ContentLength]' --output text 2>$null
+    $info = aws @AwsArgs s3api head-object --bucket $bucket --key $key --query '[LastModified, ContentLength]' --output text @ExtraArgs 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$info")) {
         return $null
     }
@@ -634,16 +669,10 @@ function Get-MbtilesFile {
     )
 
     $filename = Split-Path -Leaf $Dest
-    $bucketValue = [System.Environment]::GetEnvironmentVariable($BucketEnvVarName)
-    if (-not [string]::IsNullOrWhiteSpace($bucketValue)) {
-        $prefix = ConvertTo-S3Uri $bucketValue
-        $awsArgs = Get-S3SourceArgs -Public $false
-        $source = $BucketEnvVarName
-    } else {
-        $prefix = $PublicPrefix
-        $awsArgs = Get-S3SourceArgs -Public $true
-        $source = "the public mirror at $($script:PublicS3Endpoint)"
-    }
+    $mirror = Resolve-S3Source -BucketEnvVarName $BucketEnvVarName -PublicPrefix $PublicPrefix
+    $prefix = $mirror.Prefix
+    $awsArgs = $mirror.AwsArgs
+    $source = $mirror.Source
     $remoteUri = "$prefix/$filename"
     $destExists = (Test-Path $Dest -PathType Leaf) -and ((Get-Item $Dest).Length -gt 0)
     $needDownload = $true
@@ -912,17 +941,27 @@ function Show-DockerMemoryWarning {
     }
 }
 
-# Stops when the effective uWSGI worker settings can't start, before Docker
-# spends minutes building and then reports an unhealthy mapproxy. Mirrors the
-# defaults in docker-compose.yaml; UWSGI_CHEAPER=0 turns cheaper mode off.
-function Assert-UwsgiSettings {
+# Returns what is wrong with the effective uWSGI worker settings, or $null
+# when uWSGI can start with them. Mirrors the defaults in docker-compose.yaml;
+# UWSGI_CHEAPER=0 turns cheaper mode off.
+function Get-UwsgiSettingsProblem {
     $processes = if ($env:UWSGI_PROCESSES) { $env:UWSGI_PROCESSES } else { '8' }
     $cheaper = if ($env:UWSGI_CHEAPER) { $env:UWSGI_CHEAPER } else { '4' }
     if ($processes -notmatch '^\d{1,9}$' -or $cheaper -notmatch '^\d{1,9}$') {
-        Write-ErrorAndExit "UWSGI_PROCESSES ($processes) and UWSGI_CHEAPER ($cheaper) must be whole numbers -- check .env."
+        return "UWSGI_PROCESSES ($processes) and UWSGI_CHEAPER ($cheaper) must be whole numbers -- check .env."
     }
     if ([int]$cheaper -ne 0 -and [int]$cheaper -ge [int]$processes) {
-        Write-ErrorAndExit "UWSGI_CHEAPER ($cheaper) must be lower than UWSGI_PROCESSES ($processes), or uWSGI won't start. Change them in .env (UWSGI_CHEAPER=0 keeps every worker running)."
+        return "UWSGI_CHEAPER ($cheaper) must be lower than UWSGI_PROCESSES ($processes), or uWSGI won't start. Change them in .env (UWSGI_CHEAPER=0 keeps every worker running)."
+    }
+    return $null
+}
+
+# Stops when the uWSGI worker settings can't start, before Docker spends
+# minutes building and then reports an unhealthy mapproxy.
+function Assert-UwsgiSettings {
+    $problem = Get-UwsgiSettingsProblem
+    if ($problem) {
+        Write-ErrorAndExit $problem
     }
 }
 
@@ -980,13 +1019,14 @@ function Show-Unselected4087Warning {
     Write-WarningLine "tileservergl4087 (the EPSG:4087 stack) is running, but this run wasn't given -Use4087:`n$effectText`nPress Ctrl+C now and re-run with -Use4087 to keep it, or let this run switch to the default stack."
 }
 
-# Warns when COMPOSE_FILE (environment or .env) lists different files from
-# this run's -f list. -f overrides it, so this run is unaffected, but a plain
-# `docker compose` typed afterwards follows COMPOSE_FILE and may act on a
-# different deployment than the one just deployed.
-function Show-ComposeFileWarning {
+# Returns a warning when COMPOSE_FILE (environment or .env) lists different
+# files from this run's -f list, and $null otherwise. -f overrides it, so
+# this run is unaffected, but a plain `docker compose` typed afterwards
+# follows COMPOSE_FILE and may act on a different deployment than the one
+# just deployed. Shared by the up-front warning and -Check.
+function Get-ComposeFileMismatchMessage {
     if ([string]::IsNullOrWhiteSpace($env:COMPOSE_FILE)) {
-        return
+        return $null
     }
     $separator = if ($env:COMPOSE_PATH_SEPARATOR) { $env:COMPOSE_PATH_SEPARATOR } else { ';' }
     $configured = @($env:COMPOSE_FILE -split [regex]::Escape($separator) |
@@ -994,7 +1034,15 @@ function Show-ComposeFileWarning {
         ForEach-Object { Split-Path -Leaf $_ })
     $expected = $script:ComposeFileNames -join ' '
     if (($configured -join ' ') -ne $expected) {
-        Write-WarningLine "COMPOSE_FILE is set to '$($env:COMPOSE_FILE)', but this run uses $expected, and -f overrides COMPOSE_FILE. A plain 'docker compose' you type yourself follows COMPOSE_FILE, so it may act on a different deployment. The commands printed at the end include explicit -f flags."
+        return "COMPOSE_FILE is set to '$($env:COMPOSE_FILE)', but this run uses $expected, and -f overrides COMPOSE_FILE. A plain 'docker compose' you type yourself follows COMPOSE_FILE, so it may act on a different deployment."
+    }
+    return $null
+}
+
+function Show-ComposeFileWarning {
+    $message = Get-ComposeFileMismatchMessage
+    if ($message) {
+        Write-WarningLine "$message The commands printed at the end include explicit -f flags."
     }
 }
 
@@ -1007,6 +1055,7 @@ function Write-RunSummary {
         [bool]$RunPrep,
         [bool]$RunRefresh,
         [bool]$RunDeploy,
+        [bool]$RunCheck,
         [bool]$StepSelected
     )
     $steps = @()
@@ -1019,6 +1068,7 @@ function Write-RunSummary {
         $steps += '(refresh, if the download fetches anything)'
     }
     if ($RunDeploy) { $steps += 'deploy' }
+    if ($RunCheck) { $steps += 'check' }
     $stepText = if ($steps.Count -gt 0) { $steps -join ' ' } else { '(none)' }
     $stack = if ($script:Use4087) { 'the EPSG:4087 deployment' } else { 'the default deployment (EPSG:3857)' }
     $nginx = if ($script:WithNginx) { 'with nginx' } else { 'without nginx' }
@@ -1146,6 +1196,476 @@ function Start-Stack {
 }
 
 # ---------------------------------------------------------------------------
+# Check (-Check): a read-only report. Mirrors deploy.sh's run_checks.
+# ---------------------------------------------------------------------------
+
+function Write-CheckLine {
+    param([ValidateSet('PASS', 'WARN', 'FAIL')][string]$Level, [string]$Message)
+    $color = 'Green'
+    if ($Level -eq 'PASS') {
+        $script:CheckPassed++
+    } elseif ($Level -eq 'WARN') {
+        $script:CheckWarned++
+        $color = 'Yellow'
+    } else {
+        $script:CheckFailed++
+        $color = 'Red'
+    }
+    Write-Host '  ' -NoNewline
+    Write-Host $Level -ForegroundColor $color -NoNewline
+    Write-Host "  $Message"
+}
+
+function Write-CheckPass { param([string]$Message) Write-CheckLine -Level 'PASS' -Message $Message }
+function Write-CheckWarn { param([string]$Message) Write-CheckLine -Level 'WARN' -Message $Message }
+function Write-CheckFail { param([string]$Message) Write-CheckLine -Level 'FAIL' -Message $Message }
+
+# The address the published ports answer on: BIND_ADDR from .env, else this
+# machine. 0.0.0.0 and :: mean "every interface", which localhost reaches.
+function Get-CheckHost {
+    $bindAddr = if ($env:BIND_ADDR) { $env:BIND_ADDR } else { '127.0.0.1' }
+    if ($bindAddr -eq '0.0.0.0' -or $bindAddr -eq '::') {
+        return '127.0.0.1'
+    }
+    if ($bindAddr.Contains(':')) {
+        return "[$bindAddr]"
+    }
+    return $bindAddr
+}
+
+# True when something accepts TCP connections on $HostName:$Port. A short
+# timeout, because a connection to a filtered address would otherwise wait
+# for the operating system's own, which is long.
+function Test-PortInUse {
+    param([string]$HostName, [int]$Port)
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $pending = $client.BeginConnect($HostName.Trim('[', ']'), $Port, $null, $null)
+        if (-not $pending.AsyncWaitHandle.WaitOne(1500, $false)) {
+            return $false
+        }
+        $client.EndConnect($pending)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+# The environment variable $Name (set by the session or by .env), or $Default
+# when it is unset or empty -- the same fallback Compose's ${NAME:-default}
+# applies in the compose files.
+function Get-EnvOrDefault {
+    param([string]$Name, [string]$Default)
+    $value = [System.Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrEmpty($value)) {
+        return $Default
+    }
+    return $value
+}
+
+# "v2.29.1-desktop.1" -> [version]2.29.1, or $null when it isn't a version.
+function ConvertTo-DockerVersion {
+    param([string]$Text)
+    $clean = ($Text.Trim() -replace '^v', '') -replace '[^0-9.].*$', ''
+    $version = $null
+    if ([version]::TryParse($clean, [ref]$version)) {
+        return $version
+    }
+    return $null
+}
+
+function Test-CheckIsRunning {
+    param([string]$Name)
+    return ($script:CheckRunning -contains $Name)
+}
+
+function Test-ToolsAndVersions {
+    # Native commands may write to stderr -- see Test-DockerEngineRunning.
+    $ErrorActionPreference = 'Continue'
+
+    if (Test-CommandExists 'docker') {
+        $text = "$(docker --version 2>$null)".Trim()
+        $comma = $text.IndexOf(',')
+        Write-CheckPass $(if ($comma -gt 0) { $text.Substring(0, $comma) } else { 'docker' })
+
+        $composeText = "$(docker compose version --short 2>$null)".Trim()
+        $composeExit = $LASTEXITCODE
+        $composeVersion = ConvertTo-DockerVersion $composeText
+        if ($composeExit -ne 0 -or $null -eq $composeVersion) {
+            Write-CheckFail "The Docker Compose plugin isn't available ('docker compose version' failed) -- .\deploy.ps1 -Init installs Docker Desktop, which includes it"
+        } elseif ($composeVersion -ge $script:MinComposeVersion) {
+            Write-CheckPass "Docker Compose $composeText (needs $($script:MinComposeVersion) or newer)"
+        } else {
+            Write-CheckFail "Docker Compose $composeText is too old: this stack needs $($script:MinComposeVersion) or newer -- see `"Docker or Docker Compose Is Too Old`" in docs/troubleshooting.md"
+        }
+    } else {
+        Write-CheckFail "docker isn't installed, or this PowerShell window doesn't see it yet -- .\deploy.ps1 -Init installs it (docs/install-windows.md)"
+    }
+
+    if (Test-CommandExists 'aws') {
+        $awsText = Get-AwsVersionText
+        $awsFirst = ("$awsText".Trim() -split '\s+')[0]
+        Write-CheckPass $(if ($awsFirst) { $awsFirst } else { 'aws' })
+    } else {
+        Write-CheckWarn "aws isn't installed -- only -Download needs it (.\deploy.ps1 -Init installs it)"
+    }
+
+    if (Test-CommandExists 'git') {
+        $gitText = "$(git --version 2>$null)".Trim()
+        Write-CheckPass $(if ($gitText) { $gitText } else { 'git' })
+    } else {
+        Write-CheckWarn "git isn't installed -- you need it to update this checkout (.\deploy.ps1 -Init installs it)"
+    }
+}
+
+# Whether the Docker engine answers, its version, and its memory. Sets
+# CheckEngineUp for the port and service checks, which need it.
+function Test-DockerEngineAndMemory {
+    if (-not (Test-CommandExists 'docker')) {
+        return  # Test-ToolsAndVersions already said so
+    }
+    if (-not (Test-DockerEngineRunning)) {
+        Write-CheckFail "The Docker engine isn't running, so the running services were not checked -- start Docker Desktop; .\deploy.ps1 -Deploy also starts it"
+        return
+    }
+    $script:CheckEngineUp = $true
+    $ErrorActionPreference = 'Continue'
+
+    $engineText = "$(docker version --format '{{.Server.Version}}' 2>$null)".Trim()
+    $engineVersion = ConvertTo-DockerVersion $engineText
+    if ($LASTEXITCODE -ne 0 -or $null -eq $engineVersion) {
+        Write-CheckWarn 'The Docker engine is running, but its version could not be read'
+    } elseif ($engineVersion -ge $script:MinDockerEngineVersion) {
+        Write-CheckPass "Docker Engine $engineText is running (needs $($script:MinDockerEngineVersion) or newer)"
+    } else {
+        Write-CheckFail "Docker Engine $engineText is too old: this stack needs $($script:MinDockerEngineVersion) or newer -- see `"Docker or Docker Compose Is Too Old`" in docs/troubleshooting.md"
+    }
+
+    $mem = "$(docker info --format '{{.MemTotal}}' 2>$null)".Trim()
+    if ($LASTEXITCODE -ne 0 -or $mem -notmatch '^\d+$') {
+        Write-CheckWarn "Couldn't read how much memory Docker has"
+    } elseif ([long]$mem -lt $script:MinDockerMemoryBytes) {
+        Write-CheckWarn "Docker has only $(Format-Bytes ([long]$mem)) of memory; RBT is built for 16 GB -- raise it in %UserProfile%\.wslconfig (docs/install-windows.md, 'Give WSL2 enough memory') and run 'wsl --shutdown'"
+    } else {
+        Write-CheckPass "Docker has $(Format-Bytes ([long]$mem)) of memory (RBT is built for 16 GB)"
+    }
+}
+
+# The .env settings that decide whether mapproxy can start at all.
+function Test-CheckSettings {
+    $problem = Get-UwsgiSettingsProblem
+    if ($problem) {
+        Write-CheckFail $problem
+        return
+    }
+    $processes = if ($env:UWSGI_PROCESSES) { $env:UWSGI_PROCESSES } else { '8' }
+    $cheaper = if ($env:UWSGI_CHEAPER) { $env:UWSGI_CHEAPER } else { '4' }
+    Write-CheckPass "UWSGI_PROCESSES=$processes and UWSGI_CHEAPER=$cheaper let uWSGI start"
+}
+
+# One MBTiles file: is it there, and (for RBT.mbtiles, which the mirror
+# updates) is the mirror's copy newer? Reads the mirror with short timeouts
+# and one attempt, so an offline machine gets a warning in seconds instead of
+# waiting out the AWS CLI's retries. A missing or stale file adds its size to
+# CheckNeededBytes for the disk-space check, the same room Assert-FreeSpace
+# demands of a download.
+function Test-MbtilesFile {
+    param(
+        [string]$BucketEnvVarName,
+        [string]$Dest,
+        [bool]$CheckRemote,
+        [string]$PublicPrefix
+    )
+    $filename = Split-Path -Leaf $Dest
+    $dir = Split-Path -Parent $Dest
+    $rel = $Dest
+    $rootPrefix = $script:ScriptDir.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if ($Dest.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $rel = $Dest.Substring($rootPrefix.Length)
+    }
+    $downloadCmd = '.\deploy.ps1 -Download'
+    if ($dir -eq $script:DataDir4087) {
+        $downloadCmd = '.\deploy.ps1 -Use4087 -Download'
+    }
+
+    if (Test-Path -LiteralPath $dir -PathType Container) {
+        $pattern = '^' + [regex]::Escape($filename) + '\.[0-9A-Fa-f]{8}$'
+        $partials = @(Get-ChildItem -LiteralPath $dir -File -Force | Where-Object { $_.Name -match $pattern })
+        foreach ($partial in $partials) {
+            Write-CheckWarn "$($partial.Name) in $(Split-Path -Parent $rel) is left over from an interrupted download and uses disk space -- $downloadCmd removes it"
+        }
+    }
+
+    $present = (Test-Path -LiteralPath $Dest -PathType Leaf) -and ((Get-Item -LiteralPath $Dest).Length -gt 0)
+    $mirror = Resolve-S3Source -BucketEnvVarName $BucketEnvVarName -PublicPrefix $PublicPrefix
+    $remoteInfo = $null
+    if ((-not $present -or $CheckRemote) -and (Test-CommandExists 'aws')) {
+        $previousAttempts = $env:AWS_MAX_ATTEMPTS
+        $env:AWS_MAX_ATTEMPTS = '1'
+        try {
+            $remoteInfo = Get-RemoteObjectInfo -RemoteUri "$($mirror.Prefix)/$filename" -AwsArgs $mirror.AwsArgs `
+                -ExtraArgs @('--cli-connect-timeout', '5', '--cli-read-timeout', '15')
+        } finally {
+            if ($null -eq $previousAttempts) {
+                Remove-Item Env:\AWS_MAX_ATTEMPTS -ErrorAction SilentlyContinue
+            } else {
+                $env:AWS_MAX_ATTEMPTS = $previousAttempts
+            }
+        }
+    }
+
+    if (-not $present) {
+        if ($null -ne $remoteInfo) {
+            $script:CheckNeededBytes += $remoteInfo.Size
+            Write-CheckFail "$rel is missing or empty ($(Format-Bytes $remoteInfo.Size) to download) -- $downloadCmd fetches it"
+        } else {
+            $script:CheckNeededUnknown = $true
+            Write-CheckFail "$rel is missing or empty -- $downloadCmd fetches it"
+        }
+        return
+    }
+
+    $size = (Get-Item -LiteralPath $Dest).Length
+    if (-not $CheckRemote) {
+        Write-CheckPass "$rel ($(Format-Bytes $size))"
+    } elseif ($null -eq $remoteInfo) {
+        Write-CheckWarn "$rel ($(Format-Bytes $size)) is present, but $($mirror.Source) couldn't be read to see whether it has a newer copy (offline, or no aws?)"
+    } elseif ($remoteInfo.LastModifiedUtc -gt (Get-Item -LiteralPath $Dest).LastWriteTimeUtc) {
+        $script:CheckNeededBytes += $remoteInfo.Size
+        $modified = $remoteInfo.LastModifiedUtc.ToString('yyyy-MM-dd HH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture)
+        Write-CheckWarn "$rel ($(Format-Bytes $size)) is out of date: a newer copy exists, modified $modified UTC (source: $($mirror.Source)) -- $downloadCmd fetches it and refreshes the stack"
+    } else {
+        Write-CheckPass "$rel ($(Format-Bytes $size)) is up to date with $($mirror.Source)"
+    }
+}
+
+function Test-CheckMbtiles {
+    Test-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT' -Dest $script:RbtFile3857 -CheckRemote $true -PublicPrefix $script:PublicS3Prefix3857
+    Test-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN' -Dest $script:TerrainFile3857 -CheckRemote $false -PublicPrefix $script:PublicS3Prefix3857
+    if ($script:Use4087) {
+        Test-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT_4087' -Dest $script:RbtFile4087 -CheckRemote $true -PublicPrefix $script:PublicS3Prefix4087
+        Test-MbtilesFile -BucketEnvVarName 'S3_BUCKET_TERRAIN_4087' -Dest $script:TerrainFile4087 -CheckRemote $false -PublicPrefix $script:PublicS3Prefix4087
+    }
+}
+
+# Free space on the disk that holds the map data: enough for what is still
+# to be downloaded (FAIL if not), plus the reserve (WARN if not).
+function Test-CheckDiskSpace {
+    $needed = [long]$script:CheckNeededBytes
+    # The data directory doesn't exist before the first download; its nearest
+    # existing parent is on the same disk.
+    $dir = $script:DataDir
+    while ($dir -and -not (Test-Path -LiteralPath $dir -PathType Container)) {
+        $parent = Split-Path -Parent $dir
+        if (-not $parent -or $parent -eq $dir) {
+            break
+        }
+        $dir = $parent
+    }
+    $free = Get-FreeSpaceBytes -Directory $dir
+    if ($null -eq $free) {
+        Write-CheckWarn "Couldn't read the free disk space for $dir"
+        return
+    }
+
+    $reserve = if ($script:WithNginx) { $script:MinFreeBytesWithNginx } else { $script:MinFreeBytesWithoutNginx }
+    if ($free -lt $needed) {
+        Write-CheckFail "$(Format-Bytes $free) free on the disk that holds tileserver\data, but the map data still to download needs $(Format-Bytes $needed) -- free up space first (`"The Disk Fills Up, or a Download Was Interrupted`" in docs/troubleshooting.md)"
+    } elseif ($free -lt ($needed + $reserve)) {
+        Write-CheckWarn "$(Format-Bytes $free) free on the disk that holds tileserver\data; $(Format-Bytes ($needed + $reserve)) is wanted ($(Format-Bytes $needed) of map data to download, plus $(Format-Bytes $reserve) for nginx's tile cache and the MapProxy image)"
+    } else {
+        Write-CheckPass "$(Format-Bytes $free) free on the disk that holds tileserver\data"
+    }
+    if ($script:CheckNeededUnknown) {
+        Write-CheckWarn "The size of the missing map data couldn't be read from the mirror, so whether it fits on the disk isn't known (it is several hundred GB -- the README's 'Get the Map Data' shows how to list the sizes)"
+    }
+}
+
+# One published port: free, held by this service's own container, or held by
+# something else (another container, or a program on the host). Docker is
+# asked first because its own proxy listens on a port it publishes, which
+# would otherwise look like "another program".
+function Test-CheckPort {
+    param([string]$Service, [string]$Port, [string]$EnvVar)
+    $owner = ''
+    if ($script:CheckEngineUp) {
+        $ErrorActionPreference = 'Continue'
+        $lines = @(docker ps --format "{{.Names}}`t{{.Ports}}" 2>$null)
+        foreach ($line in $lines) {
+            $fields = "$line" -split "`t", 2
+            if ($fields.Count -eq 2 -and $fields[1].Contains(":$Port->")) {
+                $owner = $fields[0]
+                break
+            }
+        }
+    }
+
+    if ($owner -and $owner -eq $Service) {
+        Write-CheckPass "Port $Port ($Service) is published by the running $Service container"
+    } elseif ($owner) {
+        Write-CheckFail "Port $Port ($Service) is published by the container '$owner', not by the RBT $Service container -- stop it, or set $EnvVar in .env to another port (`"Port Is Already Allocated`" in docs/troubleshooting.md)"
+    } elseif (Test-PortInUse -HostName (Get-CheckHost) -Port ([int]$Port)) {
+        Write-CheckFail "Port $Port ($Service) is in use by another program -- find it with 'Get-NetTCPConnection -LocalPort $Port', or set $EnvVar in .env to another port (`"Port Is Already Allocated`" in docs/troubleshooting.md)"
+    } else {
+        Write-CheckPass "Port $Port ($Service) is free"
+    }
+}
+
+function Test-CheckPorts {
+    if ($script:WithNginx) {
+        Test-CheckPort -Service 'nginx' -Port (Get-EnvOrDefault 'NGINX_PORT' '8082') -EnvVar 'NGINX_PORT'
+    }
+    Test-CheckPort -Service 'mapproxy' -Port (Get-EnvOrDefault 'MAPPROXY_PORT' '8081') -EnvVar 'MAPPROXY_PORT'
+    Test-CheckPort -Service 'tileservergl' -Port (Get-EnvOrDefault 'TILESERVER_PORT' '8080') -EnvVar 'TILESERVER_PORT'
+    if ($script:Use4087) {
+        Test-CheckPort -Service 'tileservergl4087' -Port (Get-EnvOrDefault 'TILESERVER_4087_PORT' '8083') -EnvVar 'TILESERVER_4087_PORT'
+    }
+}
+
+# The stack's containers against the switches given: each one running and
+# healthy, none of them missing while the rest run, and nothing running that
+# these switches would leave out (which a -Deploy would remove, or a -Refresh
+# would skip). Fills CheckRunning for Test-CheckEndpoints.
+function Test-CheckServices {
+    if (-not $script:CheckEngineUp) {
+        return
+    }
+    $ErrorActionPreference = 'Continue'
+
+    $expected = @()
+    if ($script:WithNginx) {
+        $expected += 'nginx'
+    }
+    $expected += 'mapproxy'
+    $expected += $script:TileserverServices
+
+    $states = @{}
+    foreach ($svc in $expected) {
+        $text = "$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $svc 2>$null)".Trim()
+        $states[$svc] = if ($LASTEXITCODE -eq 0) { $text } else { '' }
+    }
+    $found = @($expected | Where-Object { $states[$_] }).Count
+
+    if ($found -eq 0) {
+        Write-CheckWarn 'None of the RBT services is running yet -- .\deploy.ps1 -Deploy starts the stack'
+    } else {
+        foreach ($svc in $expected) {
+            $state = $states[$svc]
+            if (-not $state) {
+                Write-CheckFail "$svc is not running, though the rest of the stack is -- see '$(Get-ComposeHint) logs $svc', or re-run .\deploy.ps1 -Deploy"
+                continue
+            }
+            $parts = $state -split ' ', 2
+            $status = $parts[0]
+            $health = if ($parts.Count -gt 1) { $parts[1] } else { 'none' }
+            if ($status -eq 'running') {
+                $script:CheckRunning += $svc
+            }
+            if ($status -eq 'running' -and ($health -eq 'healthy' -or $health -eq 'none')) {
+                Write-CheckPass "$svc is running and healthy"
+            } elseif ($status -eq 'running' -and $health -eq 'starting') {
+                Write-CheckWarn "$svc is running, but its health check hasn't passed yet (TileserverGL takes a few minutes to open the MBTiles) -- run the check again shortly"
+            } elseif ($status -eq 'running') {
+                Write-CheckFail "$svc is running, but its health check reports $health -- see '$(Get-ComposeHint) logs $svc'"
+            } else {
+                Write-CheckFail "$svc is $status, not running -- see '$(Get-ComposeHint) logs $svc'"
+            }
+        }
+    }
+
+    $runningNames = @(docker ps --format '{{.Names}}' 2>$null)
+    if (-not $script:Use4087 -and ($runningNames -contains 'tileservergl4087')) {
+        Write-CheckWarn "tileservergl4087 (the EPSG:4087 stack) is running, but this check wasn't given -Use4087, so it looked only at the default deployment -- add -Use4087 to check the EPSG:4087 stack (a -Deploy without it removes tileservergl4087)"
+    }
+    if (-not $script:WithNginx -and ($runningNames -contains 'nginx')) {
+        Write-CheckWarn 'nginx is running, but this check was given -NoNginx -- drop -NoNginx to check the stack with it (a -Deploy with -NoNginx removes nginx)'
+    }
+    $mismatch = Get-ComposeFileMismatchMessage
+    if ($mismatch) {
+        Write-CheckWarn $mismatch
+    }
+}
+
+# Asks one URL for an answer: $Label describes it, $Expect is text the answer
+# must contain (empty for any 200).
+function Test-Url {
+    param([string]$Label, [string]$Url, [string]$Expect)
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 15
+    } catch {
+        Write-CheckFail "${Label}: $Url did not answer ($($_.Exception.Message))"
+        return
+    }
+    $content = $response.Content
+    if ($content -is [byte[]]) {
+        $content = [System.Text.Encoding]::UTF8.GetString($content)
+    }
+    if ($Expect -and "$content".IndexOf($Expect, [System.StringComparison]::Ordinal) -lt 0) {
+        Write-CheckFail "${Label}: $Url answered, but not with the expected content ('$Expect')"
+        return
+    }
+    Write-CheckPass "${Label}: $Url"
+}
+
+# For the services that are running: /healthz and the WMTS capabilities
+# document, the two quickest proofs that nginx and MapProxy answer. Without
+# nginx there is no /healthz, so MapProxy and TileserverGL are asked directly.
+function Test-CheckEndpoints {
+    if (-not $script:CheckEngineUp -or $script:CheckRunning.Count -eq 0) {
+        return
+    }
+    $hostName = Get-CheckHost
+
+    if ($script:WithNginx -and (Test-CheckIsRunning 'nginx')) {
+        $port = Get-PublishedPort -Service 'nginx' -ContainerPort 8082 -Default (Get-EnvOrDefault 'NGINX_PORT' '8082')
+        Test-Url -Label 'nginx /healthz' -Url "http://${hostName}:$port/healthz" -Expect 'ok'
+        if (Test-CheckIsRunning 'mapproxy') {
+            Test-Url -Label 'WMTS capabilities through nginx' -Url "http://${hostName}:$port/mapproxy/wmts/1.0.0/WMTSCapabilities.xml" -Expect '<Capabilities'
+        }
+        if ($script:Use4087 -and (Test-CheckIsRunning 'tileservergl4087')) {
+            Test-Url -Label 'tileservergl4087 through nginx' -Url "http://${hostName}:$port/tileservergl4087/" -Expect ''
+        }
+    } else {
+        if (Test-CheckIsRunning 'mapproxy') {
+            $port = Get-PublishedPort -Service 'mapproxy' -ContainerPort 5000 -Default (Get-EnvOrDefault 'MAPPROXY_PORT' '8081')
+            Test-Url -Label 'WMTS capabilities from mapproxy' -Url "http://${hostName}:$port/wmts/1.0.0/WMTSCapabilities.xml" -Expect '<Capabilities'
+        }
+        if (Test-CheckIsRunning 'tileservergl') {
+            $port = Get-PublishedPort -Service 'tileservergl' -ContainerPort 8080 -Default (Get-EnvOrDefault 'TILESERVER_PORT' '8080')
+            Test-Url -Label 'tileservergl' -Url "http://${hostName}:$port/" -Expect ''
+        }
+        if ($script:Use4087 -and (Test-CheckIsRunning 'tileservergl4087')) {
+            $port = Get-PublishedPort -Service 'tileservergl4087' -ContainerPort 8080 -Default (Get-EnvOrDefault 'TILESERVER_4087_PORT' '8083')
+            Test-Url -Label 'tileservergl4087' -Url "http://${hostName}:$port/" -Expect ''
+        }
+    }
+}
+
+# -Check: changes nothing, prints one PASS, WARN or FAIL line per check, and
+# exits 1 if any of them FAILed. Runs after the other selected steps, so
+# `-Deploy -Check` deploys and then reports on what it deployed.
+function Invoke-Checks {
+    Write-DeployLog 'Checking this machine and the RBT stack (read-only: nothing is changed)'
+    Test-ToolsAndVersions
+    Test-DockerEngineAndMemory
+    Test-CheckSettings
+    Test-CheckMbtiles
+    Test-CheckDiskSpace
+    Test-CheckPorts
+    Test-CheckServices
+    Test-CheckEndpoints
+
+    Write-DeployLog "Check finished: $($script:CheckPassed) passed, $($script:CheckWarned) warnings, $($script:CheckFailed) failed"
+    if ($script:CheckFailed -gt 0) {
+        Write-Host '    Fix the FAIL lines, then run .\deploy.ps1 -Check again. docs/troubleshooting.md covers the common ones.'
+        exit 1
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1195,11 +1715,30 @@ $script:MinDockerEngineVersion = [version]'25.0.0'
 # amount configured). Below it, uWSGI's workers and the renderer pools can be
 # killed for lack of memory, which looks like a service that restarts forever.
 $script:MinDockerMemoryBytes = [long]14GB
+# Disk the stack wants free beyond the map data itself, when it is already
+# downloaded: nginx's tile cache (up to 10 GB, see nginx.conf) plus room for
+# the MapProxy image (about 2 GB), or just the image without nginx. Below it
+# -Check warns; it never blocks, because the cache grows only as tiles are
+# requested.
+$script:MinFreeBytesWithNginx = [long]13GB
+$script:MinFreeBytesWithoutNginx = [long]3GB
 $script:RebootRequired = $false
 # Set by Get-MbtilesFile whenever it actually downloads a file, so the
 # refresh step knows the running tileservers (and nginx's tile cache) are
 # now stale.
 $script:DataUpdated = $false
+# Filled in by -Check's checks, for the checks that follow them: the PASS,
+# WARN and FAIL counts; whether the Docker engine answered; which of the
+# stack's containers are running (names); and how many bytes the map data
+# still to be downloaded will need ($script:CheckNeededUnknown when the mirror
+# wouldn't say).
+$script:CheckPassed = 0
+$script:CheckWarned = 0
+$script:CheckFailed = 0
+$script:CheckEngineUp = $false
+$script:CheckRunning = @()
+$script:CheckNeededBytes = [long]0
+$script:CheckNeededUnknown = $false
 
 $reRunSwitches = $PSBoundParameters.Keys | Where-Object { $PSBoundParameters[$_] } | ForEach-Object { "-$_" }
 $script:ReRunCommand = if ($reRunSwitches) { ".\deploy.ps1 $($reRunSwitches -join ' ')" } else { '.\deploy.ps1' }
@@ -1209,7 +1748,8 @@ $runDownload = [bool]$Download
 $runPrep = [bool]$Prep
 $runRefresh = [bool]$Refresh
 $runDeploy = [bool]$Deploy
-$stepSelected = $runInit -or $runDownload -or $runPrep -or $runRefresh -or $runDeploy
+$runCheck = [bool]$Check
+$stepSelected = $runInit -or $runDownload -or $runPrep -or $runRefresh -or $runDeploy -or $runCheck
 
 # No step switches given -- run the whole thing (-Refresh is added below only
 # if the download step fetches new data).
@@ -1219,6 +1759,10 @@ if (-not $stepSelected) {
     $runPrep = $true
     $runDeploy = $true
 }
+
+# True when -Check is the only step. Such a run changes nothing, so it leaves
+# the warnings about what a deploy would do to the check's own report.
+$checkOnly = $runCheck -and -not ($runInit -or $runDownload -or $runPrep -or $runRefresh -or $runDeploy)
 
 if ($env:OS -ne 'Windows_NT') {
     Write-WarningLine 'This script is designed for native Windows 11; continuing anyway.'
@@ -1245,8 +1789,10 @@ foreach ($name in $script:ComposeFileNames) {
     $script:ComposeFileArgs += @('-f', $composeFile)
 }
 
-Write-RunSummary -RunInit $runInit -RunDownload $runDownload -RunPrep $runPrep -RunRefresh $runRefresh -RunDeploy $runDeploy -StepSelected $stepSelected
-Show-ComposeFileWarning
+Write-RunSummary -RunInit $runInit -RunDownload $runDownload -RunPrep $runPrep -RunRefresh $runRefresh -RunDeploy $runDeploy -RunCheck $runCheck -StepSelected $stepSelected
+if (-not $checkOnly) {
+    Show-ComposeFileWarning
+}
 
 try {
     $totalRamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
@@ -1261,7 +1807,9 @@ if ($runInit -and -not (Test-IsAdministrator)) {
     Write-ErrorAndExit "-Init needs an elevated PowerShell session -- it installs software and enables the WSL2 platform.`nRe-open PowerShell as Administrator, cd to this folder, and re-run:`n  $script:ReRunCommand"
 }
 
-Show-Unselected4087Warning -WillDownload $runDownload -WillRefresh $runRefresh -WillDeploy $runDeploy
+if (-not $checkOnly) {
+    Show-Unselected4087Warning -WillDownload $runDownload -WillRefresh $runRefresh -WillDeploy $runDeploy
+}
 
 if ($runInit) { Install-Prerequisites }
 if ($runDownload) {
@@ -1271,6 +1819,7 @@ if ($runDownload) {
 if ($runPrep) { Initialize-RuntimeEnvironment }
 if ($runRefresh) { Update-ServedData }
 if ($runDeploy) { Start-Stack }
+if ($runCheck) { Invoke-Checks }
 
 Write-DeployLog 'Done.'
 if ($runDeploy) {

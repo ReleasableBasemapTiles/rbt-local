@@ -37,9 +37,28 @@ DATA_UPDATED=0
 # 1 when the steps that need root must go through sudo -- set in "Main".
 NEED_SUDO=0
 
-log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33mWARNING:\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+# Colors only where the output is a terminal and NO_COLOR is unset, so a log
+# that is redirected or piped (./deploy.sh --check > rbt-check.txt) holds
+# plain text, not escape codes. stdout and stderr are decided separately.
+OUT_COLOR=0
+ERR_COLOR=0
+if [[ -z "${NO_COLOR:-}" ]]; then
+  if [[ -t 1 ]]; then OUT_COLOR=1; fi
+  if [[ -t 2 ]]; then ERR_COLOR=1; fi
+fi
+
+# paint SGR_CODE TEXT USE_COLOR: prints TEXT, in that color when USE_COLOR is 1.
+paint() {
+  if [[ "$3" -eq 1 ]]; then
+    printf '\033[%sm%s\033[0m' "$1" "$2"
+  else
+    printf '%s' "$2"
+  fi
+}
+
+log()  { printf '\n%s %s\n' "$(paint '1;34' '==>' "$OUT_COLOR")" "$*"; }
+warn() { printf '%s %s\n' "$(paint '1;33' 'WARNING:' "$ERR_COLOR")" "$*" >&2; }
+die()  { printf '%s %s\n' "$(paint '1;31' 'ERROR:' "$ERR_COLOR")" "$*" >&2; exit 1; }
 
 # Runs "$@" as root: via sudo when NEED_SUDO=1, else directly (already root,
 # or macOS, where nothing needs it). A function rather than a "${SUDO[@]}"
@@ -115,9 +134,9 @@ usage() {
 deploy.sh - Bootstrap a macOS or Linux host and deploy the RBT Docker Compose stack.
 
 With no step flags, --init, --download, --perm, and --deploy run in order
-(plus --refresh whenever --download fetched new data). Pass one or more
-step flags to run only those steps (still in the order listed here,
-regardless of the order given on the command line):
+(plus --refresh whenever --download fetched new data). --check is never part
+of that. Pass one or more step flags to run only those steps (still in the
+order listed here, regardless of the order given on the command line):
 
   --init      Install prerequisites: AWS CLI v2, Docker (Docker Desktop on
               macOS; Docker Engine + Compose plugin on Linux), and git.
@@ -142,10 +161,20 @@ regardless of the order given on the command line):
               service doesn't become healthy. --remove-orphans also removes
               containers left over from a different deployment, such as
               tileservergl4087 after leaving the --4087 stack.
+  --check     Report on this machine and the selected stack without
+              changing anything. One PASS, WARN or FAIL line each for: the
+              tools and their versions, the Docker engine and its memory,
+              the map data (and whether the mirror has a newer copy), free
+              disk space, the published ports, the running services against
+              the flags given, and -- if the stack is running -- /healthz
+              and the WMTS capabilities. Exits 1 if anything FAILs. It runs
+              after any other selected steps, so `--deploy --check` deploys
+              and then reports. On a machine that hasn't been set up yet it
+              FAILs on what --init and --download would provide.
 
 The modifiers below are not steps, so on their own they still mean "run every
 step" -- including installing prerequisites and downloading map data. Pair
-them with a step, such as --deploy.
+them with a step, such as --deploy or --check.
 
   --force     Re-download mbtiles even if already present (only relevant
               together with --download, or with no step flags).
@@ -171,6 +200,8 @@ Usage:
   ./deploy.sh --download --perm     # just refresh data + permissions
   ./deploy.sh --refresh             # reload styles/MBTiles, purge cache
   ./deploy.sh --deploy              # just (re)start the stack
+  ./deploy.sh --check               # read-only: what is missing or wrong?
+  ./deploy.sh --4087 --check        # same, for the EPSG:4087 stack
   ./deploy.sh --force               # full run, force re-download
   ./deploy.sh --no-nginx            # full run, skip the local nginx
   ./deploy.sh --4087                # full run, EPSG:4087 dual-tileserver stack
@@ -693,18 +724,38 @@ parse_iso8601_epoch() {
   fi
 }
 
+# Works out where one MBTiles file comes from: the file's own S3_BUCKET_*
+# variable ($1) when it is set, else the public mirror's prefix ($2). Sets
+# S3_PUBLIC (s3_aws's public flag), S3_PREFIX and S3_SOURCE (a description
+# for messages). Globals rather than output because the caller needs all
+# three, and bash 3.2 has no namerefs.
+resolve_s3_source() {
+  local bucket_var="$1" public_prefix="$2"
+  if [[ -n "${!bucket_var:-}" ]]; then
+    S3_PREFIX="$(normalize_s3_uri "${!bucket_var}")"
+    S3_PUBLIC=0
+    S3_SOURCE="$bucket_var"
+  else
+    S3_PREFIX="$public_prefix"
+    S3_PUBLIC=1
+    S3_SOURCE="the public mirror at $PUBLIC_S3_ENDPOINT"
+  fi
+}
+
 # Prints "<LastModified as epoch seconds> <size in bytes>" for an S3 object
 # on stdout, or nothing (with a non-zero exit) if it can't be read -- e.g.
 # missing object, or an IAM policy that allows GetObject but not this
 # HeadObject call. One call answers both "is the mirror's copy newer?" and
 # "how much room does the download need, and did all of it arrive?". $1 is
-# s3_aws's public flag.
+# s3_aws's public flag. Any arguments after the URI go to `aws` as well
+# (--check passes timeouts, so an offline machine isn't left waiting).
 remote_object_info() {
   local public="$1" remote_uri="$2" info last_modified size epoch
+  shift 2
   info="$(s3_aws "$public" s3api head-object \
     --bucket "$(s3_bucket_name "$remote_uri")" \
     --key "$(s3_object_key "$remote_uri")" \
-    --query '[LastModified, ContentLength]' --output text 2>/dev/null)" || return 1
+    --query '[LastModified, ContentLength]' --output text "$@" 2>/dev/null)" || return 1
   read -r last_modified size <<<"$info"
   [[ -n "$last_modified" && "$last_modified" != "None" && "$size" =~ ^[0-9]+$ ]] || return 1
   epoch="$(parse_iso8601_epoch "$last_modified")" || return 1
@@ -772,15 +823,10 @@ fetch_mbtiles() {
   local remote_info remote_epoch remote_size="" info_read=0
 
   filename="$(basename "$dest")"
-  if [[ -n "${!bucket_var:-}" ]]; then
-    prefix="$(normalize_s3_uri "${!bucket_var}")"
-    public=0
-    source="$bucket_var"
-  else
-    prefix="$public_prefix"
-    public=1
-    source="the public mirror at $PUBLIC_S3_ENDPOINT"
-  fi
+  resolve_s3_source "$bucket_var" "$public_prefix"
+  prefix="$S3_PREFIX"
+  public="$S3_PUBLIC"
+  source="$S3_SOURCE"
   remote_uri="$prefix/$filename"
   need_download=1
 
@@ -963,17 +1009,24 @@ warn_if_docker_memory_low() {
   fi
 }
 
-# Dies when the effective uWSGI worker settings can't start, before Docker
-# spends minutes building and then reports an unhealthy mapproxy. Mirrors
-# the defaults in docker-compose.yaml; UWSGI_CHEAPER=0 turns cheaper mode off.
-check_uwsgi_settings() {
+# Prints what is wrong with the effective uWSGI worker settings, or nothing
+# when uWSGI can start with them. Mirrors the defaults in
+# docker-compose.yaml; UWSGI_CHEAPER=0 turns cheaper mode off.
+uwsgi_settings_problem() {
   local processes="${UWSGI_PROCESSES:-8}" cheaper="${UWSGI_CHEAPER:-4}"
   if ! [[ "$processes" =~ ^[0-9]+$ && "$cheaper" =~ ^[0-9]+$ ]]; then
-    die "UWSGI_PROCESSES ($processes) and UWSGI_CHEAPER ($cheaper) must be whole numbers -- check .env."
+    echo "UWSGI_PROCESSES ($processes) and UWSGI_CHEAPER ($cheaper) must be whole numbers -- check .env."
+  elif (( cheaper != 0 && cheaper >= processes )); then
+    echo "UWSGI_CHEAPER ($cheaper) must be lower than UWSGI_PROCESSES ($processes), or uWSGI won't start. Change them in .env (UWSGI_CHEAPER=0 keeps every worker running)."
   fi
-  if (( cheaper != 0 && cheaper >= processes )); then
-    die "UWSGI_CHEAPER ($cheaper) must be lower than UWSGI_PROCESSES ($processes), or uWSGI won't start. Change them in .env (UWSGI_CHEAPER=0 keeps every worker running)."
-  fi
+}
+
+# Dies when the uWSGI worker settings can't start, before Docker spends
+# minutes building and then reports an unhealthy mapproxy.
+check_uwsgi_settings() {
+  local problem
+  problem="$(uwsgi_settings_problem)"
+  [[ -z "$problem" ]] || die "$problem"
 }
 
 # Dies before building or starting anything if the stack's MBTiles aren't
@@ -1036,11 +1089,12 @@ warn_if_unselected_4087_running() {
 Press Ctrl+C now and re-run with --4087 to keep it, or let this run switch to the default stack."
 }
 
-# Warns when COMPOSE_FILE (environment or .env) lists different files from
-# this run's -f list. -f overrides it, so this run is unaffected, but a
-# plain `docker compose` typed afterwards follows COMPOSE_FILE and may act on
-# a different deployment than the one just deployed.
-warn_if_compose_file_differs() {
+# Prints a warning when COMPOSE_FILE (environment or .env) lists different
+# files from this run's -f list, and nothing otherwise. -f overrides it, so
+# this run is unaffected, but a plain `docker compose` typed afterwards
+# follows COMPOSE_FILE and may act on a different deployment than the one
+# just deployed. Shared by the up-front warning and --check.
+compose_file_mismatch_message() {
   [[ -n "${COMPOSE_FILE:-}" ]] || return 0
   local entry entries configured="" expected="${COMPOSE_FILE_NAMES[*]}"
   IFS="${COMPOSE_PATH_SEPARATOR:-:}" read -r -a entries <<<"$COMPOSE_FILE"
@@ -1048,8 +1102,14 @@ warn_if_compose_file_differs() {
     configured="${configured:+$configured }${entry##*/}"
   done
   if [[ "$configured" != "$expected" ]]; then
-    warn "COMPOSE_FILE is set to '$COMPOSE_FILE', but this run uses $expected, and -f overrides COMPOSE_FILE. A plain 'docker compose' you type yourself follows COMPOSE_FILE, so it may act on a different deployment. The commands printed at the end include explicit -f flags."
+    echo "COMPOSE_FILE is set to '$COMPOSE_FILE', but this run uses $expected, and -f overrides COMPOSE_FILE. A plain 'docker compose' you type yourself follows COMPOSE_FILE, so it may act on a different deployment."
   fi
+}
+
+warn_if_compose_file_differs() {
+  local message
+  message="$(compose_file_mismatch_message)"
+  [[ -z "$message" ]] || warn "$message The commands printed at the end include explicit -f flags."
 }
 
 # Prints what this run will do, so a bare ./deploy.sh (which installs
@@ -1065,6 +1125,7 @@ describe_run() {
     steps="$steps (refresh, if the download fetches anything)"
   fi
   if [[ "$RUN_DEPLOY" -eq 1 ]]; then steps="$steps deploy"; fi
+  if [[ "$RUN_CHECK" -eq 1 ]]; then steps="$steps check"; fi
   if [[ "$USE_4087" -eq 1 ]]; then stack="the EPSG:4087 deployment"; fi
   if [[ "$WITH_NGINX" -eq 0 ]]; then nginx="without nginx"; fi
 
@@ -1166,6 +1227,413 @@ deploy_stack() {
 }
 
 # ---------------------------------------------------------------------------
+# Check (--check): a read-only report
+# ---------------------------------------------------------------------------
+
+# Disk the stack wants free beyond the map data itself, when it is already
+# downloaded: nginx's tile cache (up to 10 GB, see nginx.conf) plus room for
+# the MapProxy image (about 2 GB), or just the image without nginx. Below it
+# --check warns; it never blocks, because the cache grows only as tiles are
+# requested.
+MIN_FREE_BYTES_WITH_NGINX=$((13 * 1024 * 1024 * 1024))
+MIN_FREE_BYTES_WITHOUT_NGINX=$((3 * 1024 * 1024 * 1024))
+
+CHECK_PASSED=0
+CHECK_WARNED=0
+CHECK_FAILED=0
+# Filled in by the checks, for the checks that follow them: whether the
+# Docker engine answered; which of the stack's containers are running (names,
+# space-separated); and how many bytes the map data still to be downloaded
+# will need (CHECK_NEEDED_UNKNOWN=1 when the mirror wouldn't say).
+CHECK_ENGINE_UP=0
+CHECK_RUNNING=""
+CHECK_NEEDED_BYTES=0
+CHECK_NEEDED_UNKNOWN=0
+
+check_pass() { CHECK_PASSED=$((CHECK_PASSED + 1)); printf '  %s  %s\n' "$(paint '1;32' PASS "$OUT_COLOR")" "$*"; }
+check_warn() { CHECK_WARNED=$((CHECK_WARNED + 1)); printf '  %s  %s\n' "$(paint '1;33' WARN "$OUT_COLOR")" "$*"; }
+check_fail() { CHECK_FAILED=$((CHECK_FAILED + 1)); printf '  %s  %s\n' "$(paint '1;31' FAIL "$OUT_COLOR")" "$*"; }
+
+# The address the published ports answer on: BIND_ADDR from .env, else this
+# machine. 0.0.0.0 and :: mean "every interface", which localhost reaches.
+check_host() {
+  local host="${BIND_ADDR:-127.0.0.1}"
+  if [[ "$host" == "0.0.0.0" || "$host" == "::" ]]; then
+    host="127.0.0.1"
+  fi
+  if [[ "$host" == *:* ]]; then
+    host="[$host]"
+  fi
+  echo "$host"
+}
+
+# True when something accepts TCP connections on host $1, port $2. /dev/tcp
+# is bash itself, not a file, and macOS's bash 3.2 has it. The connection is
+# opened in a subshell so the descriptor closes with it.
+port_in_use() {
+  (exec 3<>"/dev/tcp/$1/$2") >/dev/null 2>&1
+}
+
+check_is_running() {
+  [[ " $CHECK_RUNNING " == *" $1 "* ]]
+}
+
+# True when a check-only run on Linux should go through sudo for Docker:
+# sudo and docker both exist, but this user can't talk to the engine
+# directly. With no docker there is nothing to run through sudo, and with no
+# sudo nothing to escalate with; --check then reports what it finds.
+check_only_needs_sudo() {
+  command -v sudo >/dev/null 2>&1 || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  ! docker info >/dev/null 2>&1
+}
+
+check_tools() {
+  local text version
+
+  if command -v docker >/dev/null 2>&1; then
+    text="$(docker --version 2>/dev/null)" || text="docker"
+    check_pass "${text%%,*}"
+    version="$(docker compose version --short 2>/dev/null)" || version=""
+    if [[ -z "$version" ]]; then
+      check_fail "The Docker Compose plugin isn't available ('docker compose version' failed) -- ./deploy.sh --init installs it"
+    elif version_at_least "$version" "$MIN_COMPOSE_VERSION"; then
+      check_pass "Docker Compose $version (needs $MIN_COMPOSE_VERSION or newer)"
+    else
+      check_fail "Docker Compose $version is too old: this stack needs $MIN_COMPOSE_VERSION or newer -- see \"Docker or Docker Compose Is Too Old\" in docs/troubleshooting.md"
+    fi
+  else
+    check_fail "docker isn't installed -- ./deploy.sh --init installs it (or see docs/install-macos.md, docs/install-linux.md)"
+  fi
+
+  if command -v aws >/dev/null 2>&1; then
+    text="$(aws --version 2>&1)" || text="aws"
+    check_pass "${text%% *}"
+  else
+    check_warn "aws isn't installed -- only --download needs it (./deploy.sh --init installs it)"
+  fi
+
+  if command -v git >/dev/null 2>&1; then
+    check_pass "$(git --version 2>/dev/null || echo git)"
+  else
+    check_warn "git isn't installed -- you need it to update this checkout (./deploy.sh --init installs it)"
+  fi
+}
+
+# Whether the Docker engine answers, its version, and its memory. Sets
+# CHECK_ENGINE_UP for the port and service checks, which need it.
+check_engine() {
+  local version memory
+  command -v docker >/dev/null 2>&1 || return 0  # check_tools already said so
+
+  if ! as_root docker info >/dev/null 2>&1; then
+    check_fail "The Docker engine isn't running, or this user can't reach it, so the running services were not checked -- start Docker Desktop (macOS) or run 'sudo systemctl start docker' (Linux); ./deploy.sh --deploy also starts it"
+    return 0
+  fi
+  CHECK_ENGINE_UP=1
+
+  version="$(as_root docker version --format '{{.Server.Version}}' 2>/dev/null)" || version=""
+  if [[ -z "$version" ]]; then
+    check_warn "The Docker engine is running, but its version couldn't be read"
+  elif version_at_least "$version" "$MIN_DOCKER_ENGINE_VERSION"; then
+    check_pass "Docker Engine $version is running (needs $MIN_DOCKER_ENGINE_VERSION or newer)"
+  else
+    check_fail "Docker Engine $version is too old: this stack needs $MIN_DOCKER_ENGINE_VERSION or newer -- see \"Docker or Docker Compose Is Too Old\" in docs/troubleshooting.md"
+  fi
+
+  memory="$(as_root docker info --format '{{.MemTotal}}' 2>/dev/null)" || memory=""
+  if ! [[ "$memory" =~ ^[0-9]+$ ]]; then
+    check_warn "Couldn't read how much memory Docker has"
+  elif (( memory < MIN_DOCKER_MEMORY_BYTES )); then
+    check_warn "Docker has only $(format_bytes "$memory") of memory; RBT is built for 16 GB -- raise it in Docker Desktop (Settings > Resources) or, under WSL2, in %UserProfile%\\.wslconfig (docs/install-windows.md)"
+  else
+    check_pass "Docker has $(format_bytes "$memory") of memory (RBT is built for 16 GB)"
+  fi
+}
+
+# The .env settings that decide whether mapproxy can start at all.
+check_settings() {
+  local problem
+  problem="$(uwsgi_settings_problem)"
+  if [[ -n "$problem" ]]; then
+    check_fail "$problem"
+  else
+    check_pass "UWSGI_PROCESSES=${UWSGI_PROCESSES:-8} and UWSGI_CHEAPER=${UWSGI_CHEAPER:-4} let uWSGI start"
+  fi
+}
+
+# One MBTiles file: is it there, and (for RBT.mbtiles, which the mirror
+# updates) is the mirror's copy newer? Reads the mirror with short timeouts
+# and one attempt, so an offline machine gets a warning in seconds instead of
+# waiting out the AWS CLI's retries. A missing or stale file adds its size to
+# CHECK_NEEDED_BYTES for the disk-space check, the same room check_free_space
+# demands of a download.
+check_mbtiles_file() {
+  local bucket_var="$1" dest="$2" check_remote="$3" public_prefix="$4"
+  local filename rel size remote_info="" remote_epoch remote_size local_epoch partial
+  local download_cmd="./deploy.sh --download"
+
+  filename="$(basename "$dest")"
+  rel="${dest#"$SCRIPT_DIR"/}"
+  if [[ "$dest" == "$DATA_DIR_4087"/* ]]; then
+    download_cmd="./deploy.sh --4087 --download"
+  fi
+
+  for partial in "$dest".*; do
+    [[ -e "$partial" ]] || continue
+    [[ "${partial##*.}" =~ ^[0-9A-Fa-f]{8}$ ]] || continue
+    check_warn "${partial#"$SCRIPT_DIR"/} is left over from an interrupted download and uses disk space -- $download_cmd removes it"
+  done
+
+  resolve_s3_source "$bucket_var" "$public_prefix"
+  if [[ ! -s "$dest" || "$check_remote" -eq 1 ]] && command -v aws >/dev/null 2>&1; then
+    remote_info="$(AWS_MAX_ATTEMPTS=1 remote_object_info "$S3_PUBLIC" "$S3_PREFIX/$filename" \
+      --cli-connect-timeout 5 --cli-read-timeout 15)" || remote_info=""
+  fi
+
+  if [[ ! -s "$dest" ]]; then
+    if [[ -n "$remote_info" ]]; then
+      read -r remote_epoch remote_size <<<"$remote_info"
+      CHECK_NEEDED_BYTES=$((CHECK_NEEDED_BYTES + remote_size))
+      check_fail "$rel is missing or empty ($(format_bytes "$remote_size") to download) -- $download_cmd fetches it"
+    else
+      CHECK_NEEDED_UNKNOWN=1
+      check_fail "$rel is missing or empty -- $download_cmd fetches it"
+    fi
+    return 0
+  fi
+
+  size="$(file_size_bytes "$dest")"
+  if [[ "$check_remote" -eq 0 ]]; then
+    check_pass "$rel ($(format_bytes "$size"))"
+  elif [[ -z "$remote_info" ]]; then
+    check_warn "$rel ($(format_bytes "$size")) is present, but $S3_SOURCE couldn't be read to see whether it has a newer copy (offline, or no aws?)"
+  else
+    read -r remote_epoch remote_size <<<"$remote_info"
+    local_epoch="$(file_mtime_epoch "$dest")"
+    if (( remote_epoch > local_epoch )); then
+      CHECK_NEEDED_BYTES=$((CHECK_NEEDED_BYTES + remote_size))
+      check_warn "$rel ($(format_bytes "$size")) is out of date: a newer copy exists, modified $(format_epoch "$remote_epoch") (source: $S3_SOURCE) -- $download_cmd fetches it and refreshes the stack"
+    else
+      check_pass "$rel ($(format_bytes "$size")) is up to date with $S3_SOURCE"
+    fi
+  fi
+}
+
+check_mbtiles() {
+  check_mbtiles_file S3_BUCKET_RBT "$RBT_FILE_3857" 1 "$PUBLIC_S3_PREFIX_3857"
+  check_mbtiles_file S3_BUCKET_TERRAIN "$TERRAIN_FILE_3857" 0 "$PUBLIC_S3_PREFIX_3857"
+  if [[ "$USE_4087" -eq 1 ]]; then
+    check_mbtiles_file S3_BUCKET_RBT_4087 "$RBT_FILE_4087" 1 "$PUBLIC_S3_PREFIX_4087"
+    check_mbtiles_file S3_BUCKET_TERRAIN_4087 "$TERRAIN_FILE_4087" 0 "$PUBLIC_S3_PREFIX_4087"
+  fi
+}
+
+# Free space on the disk that holds the map data: enough for what is still
+# to be downloaded (FAIL if not), plus the reserve above (WARN if not).
+check_disk_space() {
+  local dir="$DATA_DIR" free reserve needed="$CHECK_NEEDED_BYTES"
+  # The data directory doesn't exist before the first download; its nearest
+  # existing parent is on the same disk.
+  while [[ ! -d "$dir" && "$dir" != "/" ]]; do
+    dir="$(dirname "$dir")"
+  done
+  if ! free="$(free_bytes "$dir")"; then
+    check_warn "Couldn't read the free disk space for $dir"
+    return 0
+  fi
+
+  if [[ "$WITH_NGINX" -eq 1 ]]; then
+    reserve="$MIN_FREE_BYTES_WITH_NGINX"
+  else
+    reserve="$MIN_FREE_BYTES_WITHOUT_NGINX"
+  fi
+  if (( free < needed )); then
+    check_fail "$(format_bytes "$free") free on the disk that holds tileserver/data, but the map data still to download needs $(format_bytes "$needed") -- free up space first (\"The Disk Fills Up, or a Download Was Interrupted\" in docs/troubleshooting.md)"
+  elif (( free < needed + reserve )); then
+    check_warn "$(format_bytes "$free") free on the disk that holds tileserver/data; $(format_bytes $((needed + reserve))) is wanted ($(format_bytes "$needed") of map data to download, plus $(format_bytes "$reserve") for nginx's tile cache and the MapProxy image)"
+  else
+    check_pass "$(format_bytes "$free") free on the disk that holds tileserver/data"
+  fi
+  if [[ "$CHECK_NEEDED_UNKNOWN" -eq 1 ]]; then
+    check_warn "The size of the missing map data couldn't be read from the mirror, so whether it fits on the disk isn't known (it is several hundred GB -- the README's 'Get the Map Data' shows how to list the sizes)"
+  fi
+}
+
+# One published port: free, held by this service's own container, or held
+# by something else (another container, or a program on the host). Docker
+# is asked first because its own proxy listens on a port it publishes, which
+# would otherwise look like "another program".
+check_port() {
+  local service="$1" port="$2" env_var="$3" owner="" host
+  host="$(check_host)"
+  if [[ "$CHECK_ENGINE_UP" -eq 1 ]]; then
+    owner="$(as_root docker ps --format $'{{.Names}}\t{{.Ports}}' 2>/dev/null |
+      awk -F'\t' -v p="$port" 'index($2, ":" p "->") { print $1 }')" || true
+    owner="${owner%%$'\n'*}"
+  fi
+
+  if [[ -n "$owner" && "$owner" == "$service" ]]; then
+    check_pass "Port $port ($service) is published by the running $service container"
+  elif [[ -n "$owner" ]]; then
+    check_fail "Port $port ($service) is published by the container '$owner', not by the RBT $service container -- stop it, or set $env_var in .env to another port (\"Port Is Already Allocated\" in docs/troubleshooting.md)"
+  elif port_in_use "$host" "$port"; then
+    check_fail "Port $port ($service) is in use by another program -- find it with 'lsof -nP -iTCP:$port -sTCP:LISTEN', or set $env_var in .env to another port (\"Port Is Already Allocated\" in docs/troubleshooting.md)"
+  else
+    check_pass "Port $port ($service) is free"
+  fi
+}
+
+check_ports() {
+  if [[ "$WITH_NGINX" -eq 1 ]]; then
+    check_port nginx "${NGINX_PORT:-8082}" NGINX_PORT
+  fi
+  check_port mapproxy "${MAPPROXY_PORT:-8081}" MAPPROXY_PORT
+  check_port tileservergl "${TILESERVER_PORT:-8080}" TILESERVER_PORT
+  if [[ "$USE_4087" -eq 1 ]]; then
+    check_port tileservergl4087 "${TILESERVER_4087_PORT:-8083}" TILESERVER_4087_PORT
+  fi
+}
+
+# The stack's containers against the flags given: each one running and
+# healthy, none of them missing while the rest run, and nothing running that
+# these flags would leave out (which a --deploy would remove, or a --refresh
+# would skip). Fills CHECK_RUNNING for check_endpoints.
+check_services() {
+  local -a expected=() states=()
+  local svc state status health found=0 i running_names message
+
+  [[ "$CHECK_ENGINE_UP" -eq 1 ]] || return 0
+
+  if [[ "$WITH_NGINX" -eq 1 ]]; then
+    expected+=(nginx)
+  fi
+  expected+=(mapproxy "${TILESERVER_SERVICES[@]}")
+
+  for svc in "${expected[@]}"; do
+    state="$(as_root docker inspect \
+      --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "$svc" 2>/dev/null)" || state=""
+    states+=("$state")
+    if [[ -n "$state" ]]; then
+      found=$((found + 1))
+    fi
+  done
+
+  if [[ "$found" -eq 0 ]]; then
+    check_warn "None of the RBT services is running yet -- ./deploy.sh --deploy starts the stack"
+  else
+    for (( i = 0; i < ${#expected[@]}; i++ )); do
+      svc="${expected[i]}"
+      state="${states[i]}"
+      if [[ -z "$state" ]]; then
+        check_fail "$svc is not running, though the rest of the stack is -- see '$(compose_hint) logs $svc', or re-run ./deploy.sh --deploy"
+        continue
+      fi
+      read -r status health <<<"$state"
+      if [[ "$status" == "running" ]]; then
+        CHECK_RUNNING="$CHECK_RUNNING $svc"
+      fi
+      case "$status:$health" in
+        running:healthy|running:none)
+          check_pass "$svc is running and healthy" ;;
+        running:starting)
+          check_warn "$svc is running, but its health check hasn't passed yet (TileserverGL takes a few minutes to open the MBTiles) -- run the check again shortly" ;;
+        running:*)
+          check_fail "$svc is running, but its health check reports $health -- see '$(compose_hint) logs $svc'" ;;
+        *)
+          check_fail "$svc is $status, not running -- see '$(compose_hint) logs $svc'" ;;
+      esac
+    done
+  fi
+
+  running_names="$(as_root docker ps --format '{{.Names}}' 2>/dev/null)" || running_names=""
+  if [[ "$USE_4087" -eq 0 ]] && grep -qx tileservergl4087 <<<"$running_names"; then
+    check_warn "tileservergl4087 (the EPSG:4087 stack) is running, but this check wasn't given --4087, so it looked only at the default deployment -- add --4087 to check the EPSG:4087 stack (a --deploy without it removes tileservergl4087)"
+  fi
+  if [[ "$WITH_NGINX" -eq 0 ]] && grep -qx nginx <<<"$running_names"; then
+    check_warn "nginx is running, but this check was given --no-nginx -- drop --no-nginx to check the stack with it (a --deploy with --no-nginx removes nginx)"
+  fi
+  message="$(compose_file_mismatch_message)"
+  if [[ -n "$message" ]]; then
+    check_warn "$message"
+  fi
+}
+
+# Asks one URL for an answer: $1 describes it, $3 is text the answer must
+# contain (empty for any 200).
+probe_url() {
+  local label="$1" url="$2" expect="$3" body rc=0
+  body="$(curl -fsS --max-time 15 "$url" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    check_fail "$label: $url did not answer (curl exit $rc)"
+  elif [[ -n "$expect" ]] && ! grep -q "$expect" <<<"$body"; then
+    check_fail "$label: $url answered, but not with the expected content ('$expect')"
+  else
+    check_pass "$label: $url"
+  fi
+}
+
+# For the services that are running: /healthz and the WMTS capabilities
+# document, the two quickest proofs that nginx and MapProxy answer. Without
+# nginx there is no /healthz, so MapProxy and TileserverGL are asked directly.
+check_endpoints() {
+  local host port
+  [[ "$CHECK_ENGINE_UP" -eq 1 ]] || return 0
+  [[ -n "${CHECK_RUNNING# }" ]] || return 0
+  if ! command -v curl >/dev/null 2>&1; then
+    check_warn "curl isn't installed, so the running services weren't asked for /healthz or the WMTS capabilities"
+    return 0
+  fi
+  host="$(check_host)"
+
+  if [[ "$WITH_NGINX" -eq 1 ]] && check_is_running nginx; then
+    port="$(published_port nginx 8082 "${NGINX_PORT:-8082}")"
+    probe_url "nginx /healthz" "http://$host:$port/healthz" "ok"
+    if check_is_running mapproxy; then
+      probe_url "WMTS capabilities through nginx" "http://$host:$port/mapproxy/wmts/1.0.0/WMTSCapabilities.xml" "<Capabilities"
+    fi
+    if [[ "$USE_4087" -eq 1 ]] && check_is_running tileservergl4087; then
+      probe_url "tileservergl4087 through nginx" "http://$host:$port/tileservergl4087/" ""
+    fi
+  else
+    if check_is_running mapproxy; then
+      port="$(published_port mapproxy 5000 "${MAPPROXY_PORT:-8081}")"
+      probe_url "WMTS capabilities from mapproxy" "http://$host:$port/wmts/1.0.0/WMTSCapabilities.xml" "<Capabilities"
+    fi
+    if check_is_running tileservergl; then
+      port="$(published_port tileservergl 8080 "${TILESERVER_PORT:-8080}")"
+      probe_url "tileservergl" "http://$host:$port/" ""
+    fi
+    if [[ "$USE_4087" -eq 1 ]] && check_is_running tileservergl4087; then
+      port="$(published_port tileservergl4087 8080 "${TILESERVER_4087_PORT:-8083}")"
+      probe_url "tileservergl4087" "http://$host:$port/" ""
+    fi
+  fi
+}
+
+# --check: changes nothing, prints one PASS, WARN or FAIL line per check,
+# and exits 1 if any of them FAILed. Runs after the other selected steps, so
+# `--deploy --check` deploys and then reports on what it deployed.
+run_checks() {
+  log "Checking this machine and the RBT stack (read-only: nothing is changed)"
+  check_tools
+  check_engine
+  check_settings
+  check_mbtiles
+  check_disk_space
+  check_ports
+  check_services
+  check_endpoints
+
+  log "Check finished: $CHECK_PASSED passed, $CHECK_WARNED warnings, $CHECK_FAILED failed"
+  if [[ "$CHECK_FAILED" -gt 0 ]]; then
+    echo "    Fix the FAIL lines, then run ./deploy.sh --check again. docs/troubleshooting.md covers the common ones."
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1176,6 +1644,7 @@ RUN_DOWNLOAD=0
 RUN_PERM=0
 RUN_REFRESH=0
 RUN_DEPLOY=0
+RUN_CHECK=0
 STEP_SELECTED=0
 
 for arg in "$@"; do
@@ -1204,6 +1673,10 @@ for arg in "$@"; do
       RUN_DEPLOY=1
       STEP_SELECTED=1
       ;;
+    --check)
+      RUN_CHECK=1
+      STEP_SELECTED=1
+      ;;
     --force)
       FORCE_DOWNLOAD=1
       ;;
@@ -1228,6 +1701,14 @@ if [[ "$STEP_SELECTED" -eq 0 ]]; then
   RUN_DEPLOY=1
 fi
 
+# 1 when --check is the only step. Such a run changes nothing, so it also
+# asks for nothing it can do without (see NEED_SUDO below), and leaves the
+# warnings about what a deploy would do to the check's own report.
+CHECK_ONLY=0
+if [[ "$RUN_CHECK" -eq 1 && $((RUN_INIT + RUN_DOWNLOAD + RUN_PERM + RUN_REFRESH + RUN_DEPLOY)) -eq 0 ]]; then
+  CHECK_ONLY=1
+fi
+
 OS_FAMILY="$(detect_os)"
 
 if [[ "$OS_FAMILY" == "macos" ]]; then
@@ -1236,6 +1717,15 @@ if [[ "$OS_FAMILY" == "macos" ]]; then
   NEED_SUDO=0
 elif [[ $EUID -eq 0 ]]; then
   NEED_SUDO=0
+elif [[ "$CHECK_ONLY" -eq 1 ]]; then
+  # Looking needs root only when this user can't reach the Docker engine
+  # (on Linux, before the docker group takes effect), and a missing sudo or
+  # docker is something to report, not to stop for.
+  if check_only_needs_sudo; then
+    NEED_SUDO=1
+  else
+    NEED_SUDO=0
+  fi
 else
   command -v sudo >/dev/null 2>&1 || die "This script needs root privileges for some steps. Install sudo or run as root."
   NEED_SUDO=1
@@ -1246,7 +1736,7 @@ if is_wsl && [[ "$SCRIPT_DIR" == /mnt/* ]]; then
 fi
 
 if [[ "$OS_FAMILY" == "unknown" ]]; then
-  warn "Could not identify this host as macOS, Ubuntu/Debian, or Fedora/RHEL. --init will stop with an error if it doesn't know how to install prerequisites here; --download, --perm, --refresh, and --deploy should still work as long as aws, docker (with the Compose plugin), and git are already installed."
+  warn "Could not identify this host as macOS, Ubuntu/Debian, or Fedora/RHEL. --init will stop with an error if it doesn't know how to install prerequisites here; --download, --perm, --refresh, --deploy and --check should still work as long as aws, docker (with the Compose plugin), and git are already installed."
 fi
 
 # The compose files (and tileserver services) this run's stack is made of, in
@@ -1269,8 +1759,11 @@ for name in "${COMPOSE_FILE_NAMES[@]}"; do
 done
 
 describe_run
-warn_if_compose_file_differs
-warn_if_unselected_4087_running
+# A check-only run reports both of these itself, as lines of its report.
+if [[ "$CHECK_ONLY" -eq 0 ]]; then
+  warn_if_compose_file_differs
+  warn_if_unselected_4087_running
+fi
 
 if [[ "$RUN_INIT" -eq 1 ]]; then
   install_prereqs
@@ -1289,6 +1782,9 @@ if [[ "$RUN_REFRESH" -eq 1 ]]; then
 fi
 if [[ "$RUN_DEPLOY" -eq 1 ]]; then
   deploy_stack
+fi
+if [[ "$RUN_CHECK" -eq 1 ]]; then
+  run_checks
 fi
 
 log "Done."
