@@ -27,24 +27,39 @@ CI rejects pull requests whose title or commits do not match this format (`Lint 
 
 ## Checks
 
-[CI](.github/workflows/ci.yml) runs these on every pull request, alongside `Lint PR` and the docs build. To run them yourself first, from the repo root:
+[CI](.github/workflows/ci.yml) runs these on every pull request, alongside `Lint PR` and the docs build. [`scripts/check.sh`](scripts/check.sh) runs the same commands, and CI calls it too, so a green run on your machine means a green run in CI. From the repo root:
 
 ```bash
-shellcheck deploy.sh .githooks/commit-msg
-
-# Every Compose stack (CI checks all four combinations), and nginx.conf in the pinned image
-docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml config --quiet
-docker run --rm --add-host mapproxy:127.0.0.1 --add-host tileservergl:127.0.0.1 \
-  -v "$PWD/nginx/config/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.31-alpine nginx -t
-
-# MapProxy's configs -- needs MapProxy (pip install MapProxy==8.1.0, in a
-# virtualenv)
-python3 .github/scripts/check-mapproxy-config.py
-
-# The docs site
-pip install -r requirements-docs.txt
-python3 scripts/prepare_pages.py && mkdocs build --strict
+scripts/check.sh          # every group
+scripts/check.sh compose  # or just the groups you name: scripts, compose, configs, sync, docs
 ```
+
+It runs every check in a group even when one fails, so one run lists all the problems, then exits 1 if there were any. These are the groups:
+
+| Group | What it checks | What it needs |
+| --- | --- | --- |
+| `scripts` | ShellCheck on `deploy.sh`, `.githooks/commit-msg` and `scripts/check.sh`, and a parse of `deploy.ps1` | `shellcheck` and `pwsh` (PowerShell 7) |
+| `compose` | Each of the four Compose stacks (`docker compose config`), and `nginx.conf` with `nginx -t` in the nginx image the Compose file pins | Docker, with the daemon running |
+| `configs` | Every tracked JSON file is valid, and MapProxy's two configs load and keep the MapProxy rules in [CLAUDE.md](CLAUDE.md) (no storage, `origin: nw`, 512px, only the overlay transparent, one reprojection hop) | The Python virtualenv below |
+| `sync` | Facts the repo states in more than one place agree: the image pins, MapProxy's version, the set of styles and the "six styles" and "18 layers" counts, the `style.json` rules, the public mirror, the uWSGI and nginx timeouts, the Docker minimums | The same virtualenv |
+| `docs` | The docs site builds with `mkdocs build --strict`, and every relative link points at a file that exists | The virtualenv, with MkDocs |
+
+A check whose tool you don't have is skipped with a warning, because few people have every tool. CI fails instead (it sets `CI=true`), so a skipped check still runs before merge.
+
+The Python groups need MapProxy, PyYAML and MkDocs. Make a virtualenv once:
+
+```bash
+python3 -m venv ~/.venvs/rbt-local
+~/.venvs/rbt-local/bin/pip install -r requirements-docs.txt "MapProxy==$(sed -n 's/^ARG MAPPROXY_VERSION=//p' Dockerfile.mapproxy)"
+```
+
+`scripts/check.sh` finds it there, or in a `.venv/` at the repo root (gitignored) if you'd rather keep one in the repo. To use another Python, set `PYTHON=/path/to/python`. The MapProxy version comes from `Dockerfile.mapproxy`, so the check always runs against the version the image installs.
+
+CI also runs three checks that need other machines, so the script doesn't:
+
+- `deploy.ps1` in Windows PowerShell 5.1 (the `windows` job): `powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy.ps1 -Help`, and PSScriptAnalyzer at Error severity.
+- `deploy.sh` under the bash 3.2 that macOS ships (the `macos` job): `/bin/bash -n deploy.sh`, and `/bin/bash deploy.sh --help`.
+- The workflows themselves, with [actionlint](https://github.com/rhysd/actionlint): `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color`.
 
 Pull requests that change `Dockerfile.mapproxy`, `mapproxy/environment.yml` or `mapproxy/docker/app.py` also build the MapProxy image.
 
