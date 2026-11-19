@@ -62,3 +62,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 180s
+      # See the mapproxy health check in docker-compose.yaml for why this is
+      # set.
+      start_interval: 5s

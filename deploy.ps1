@@ -871,8 +871,31 @@ function Assert-ComposeVersion {
         return
     }
     if ($version -lt $script:MinComposeVersion) {
-        Write-ErrorAndExit "Docker Compose $text is too old: this script needs $($script:MinComposeVersion) or newer (for 'up --wait-timeout' and 'pull --ignore-buildable'). Update Docker Desktop, then re-run -- see the `"Docker Compose Is Too Old`" section of docs/troubleshooting.md."
+        Write-ErrorAndExit "Docker Compose $text is too old: this stack needs $($script:MinComposeVersion) or newer (for the health checks' start_interval). Update Docker Desktop, then re-run -- see the `"Docker or Docker Compose Is Too Old`" section of docs/troubleshooting.md."
     }
+}
+
+# Stops when the Docker Engine is older than MinDockerEngineVersion. Needs the
+# engine running, so it comes after Start-DockerDesktopAndWait.
+function Assert-DockerEngineVersion {
+    $ErrorActionPreference = 'Continue'
+    $text = "$(docker version --format '{{.Server.Version}}' 2>$null)".Trim()
+    $exitCode = $LASTEXITCODE
+    $clean = ($text -replace '^v', '') -replace '[^0-9.].*$', ''
+    $version = $null
+    if ($exitCode -ne 0 -or -not [version]::TryParse($clean, [ref]$version)) {
+        Write-WarningLine "Couldn't read the Docker Engine version, so it wasn't checked against the minimum ($($script:MinDockerEngineVersion))."
+        return
+    }
+    if ($version -lt $script:MinDockerEngineVersion) {
+        Write-ErrorAndExit "Docker Engine $text is too old: this stack needs $($script:MinDockerEngineVersion) or newer (for the health checks' start_interval). Update Docker Desktop, then re-run -- see the `"Docker or Docker Compose Is Too Old`" section of docs/troubleshooting.md."
+    }
+}
+
+# Both checks, for every step that goes on to run Compose.
+function Assert-DockerVersions {
+    Assert-ComposeVersion
+    Assert-DockerEngineVersion
 }
 
 # Warns when the engine has less memory than the stack needs. Docker Desktop's
@@ -1033,7 +1056,7 @@ function Update-ServedData {
     $running = @(Get-RunningServices)
     $didSomething = $false
     if ($running.Count -gt 0) {
-        Assert-ComposeVersion
+        Assert-DockerVersions
     }
 
     $recreate = @($script:TileserverServices | Where-Object { $running -contains $_ })
@@ -1090,7 +1113,7 @@ function Start-Stack {
         Write-ErrorAndExit 'docker.exe not found on PATH -- run .\deploy.ps1 -Init from an elevated PowerShell first, or open a new PowerShell window if Docker Desktop was only just installed.'
     }
     Start-DockerDesktopAndWait
-    Assert-ComposeVersion
+    Assert-DockerVersions
     Show-DockerMemoryWarning
 
     Write-DeployLog 'Building the mapproxy image'
@@ -1156,11 +1179,17 @@ $script:PublicS3Prefix4087 = 's3://mbtiles/4087'
 $script:ForceDownload = [bool]$Force
 $script:WithNginx = -not [bool]$NoNginx
 $script:Use4087 = [bool]$Use4087
-# The oldest Docker Compose the script's own commands work with:
-# `up --wait-timeout` arrived in 2.17.0 and `pull --ignore-buildable` in
-# 2.15.0. Older Compose rejects the flag with an "unknown flag" error that
-# doesn't say the real problem is the version.
-$script:MinComposeVersion = [version]'2.17.0'
+# The oldest Docker Compose and Docker Engine the stack works with. The
+# health checks set `start_interval`: Compose understands it from 2.24.0
+# (older Compose rejects the file as invalid), and Compose refuses to create
+# the container on an engine older than 25 ("can't set
+# healthcheck.start_interval as feature require Docker Engine v25 or later").
+# 2.24.0 also covers what the script's own commands need: `up
+# --wait-timeout` (2.17.0) and `pull --ignore-buildable` (2.15.0), whose
+# absence shows up as an "unknown flag" error that doesn't say the real
+# problem is the version.
+$script:MinComposeVersion = [version]'2.24.0'
+$script:MinDockerEngineVersion = [version]'25.0.0'
 # The memory RBT recommends giving Docker, in bytes (14 GiB: the README asks
 # for 16 GB of RAM, and the engine's reported total is a little under the
 # amount configured). Below it, uWSGI's workers and the renderer pools can be

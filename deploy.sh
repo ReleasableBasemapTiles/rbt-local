@@ -60,11 +60,17 @@ apt_get() {
   as_root env DEBIAN_FRONTEND=noninteractive apt-get "$@"
 }
 
-# The oldest Docker Compose the script's own commands work with:
-# `up --wait-timeout` arrived in 2.17.0 and `pull --ignore-buildable` in
-# 2.15.0. Older Compose rejects the flag with an "unknown flag" error that
-# doesn't say the real problem is the version.
-MIN_COMPOSE_VERSION="2.17.0"
+# The oldest Docker Compose and Docker Engine the stack works with. The
+# health checks set `start_interval`: Compose understands it from 2.24.0
+# (older Compose rejects the file as invalid), and Compose refuses to create
+# the container on an engine older than 25 ("can't set
+# healthcheck.start_interval as feature require Docker Engine v25 or later").
+# 2.24.0 also covers what the script's own commands need: `up
+# --wait-timeout` (2.17.0) and `pull --ignore-buildable` (2.15.0), whose
+# absence shows up as an "unknown flag" error that doesn't say the real
+# problem is the version.
+MIN_COMPOSE_VERSION="2.24.0"
+MIN_DOCKER_ENGINE_VERSION="25.0.0"
 
 # The memory RBT recommends giving Docker, in bytes (14 GiB: the README asks
 # for 16 GB of RAM, and the engine's reported total is a little under the
@@ -923,7 +929,26 @@ check_compose_version() {
     return 0
   fi
   version_at_least "$version" "$MIN_COMPOSE_VERSION" ||
-    die "Docker Compose $version is too old: this script needs $MIN_COMPOSE_VERSION or newer (for 'up --wait-timeout' and 'pull --ignore-buildable'). Update Docker, then re-run -- see the \"Docker Compose Is Too Old\" section of docs/troubleshooting.md."
+    die "Docker Compose $version is too old: this stack needs $MIN_COMPOSE_VERSION or newer (for the health checks' start_interval). Update Docker, then re-run -- see the \"Docker or Docker Compose Is Too Old\" section of docs/troubleshooting.md."
+}
+
+# Dies when the Docker Engine is older than MIN_DOCKER_ENGINE_VERSION. Needs
+# the engine running, so it comes after ensure_docker_running.
+check_engine_version() {
+  local version
+  version="$(as_root docker version --format '{{.Server.Version}}' 2>/dev/null)" || version=""
+  if [[ -z "$version" ]]; then
+    warn "Couldn't read the Docker Engine version, so it wasn't checked against the minimum ($MIN_DOCKER_ENGINE_VERSION)."
+    return 0
+  fi
+  version_at_least "$version" "$MIN_DOCKER_ENGINE_VERSION" ||
+    die "Docker Engine $version is too old: this stack needs $MIN_DOCKER_ENGINE_VERSION or newer (for the health checks' start_interval). Update Docker, then re-run -- see the \"Docker or Docker Compose Is Too Old\" section of docs/troubleshooting.md."
+}
+
+# Both checks, for every step that goes on to run Compose.
+check_docker_versions() {
+  check_compose_version
+  check_engine_version
 }
 
 # Warns when the engine has less memory than the stack needs. Docker Desktop
@@ -1064,7 +1089,7 @@ refresh_stack() {
   # With the engine stopped nothing can be running, and only the on-disk
   # nginx cache below needs clearing.
   if as_root docker info >/dev/null 2>&1; then
-    check_compose_version
+    check_docker_versions
     running="$(compose ps --status running --services 2>/dev/null || true)"
   fi
 
@@ -1115,7 +1140,7 @@ deploy_stack() {
   require_mbtiles
   check_uwsgi_settings
   ensure_docker_running
-  check_compose_version
+  check_docker_versions
   warn_if_docker_memory_low
 
   log "Building the mapproxy image"

@@ -77,11 +77,11 @@ The deploy scripts start the stack with `docker compose up -d --wait --wait-time
   - Any service -- a port conflict (see "Port Is Already Allocated" above).
 - Running the deploy again is safe once the cause is fixed.
 
-## Docker Compose Is Too Old
+## Docker or Docker Compose Is Too Old
 
-The deploy scripts stop with `Docker Compose X is too old` when the Compose plugin is older than 2.17.0. They use `docker compose up --wait-timeout` (added in 2.17.0) and `docker compose pull --ignore-buildable` (2.15.0); an older Compose rejects those flags with an "unknown flag" error that doesn't mention the version.
+The deploy scripts stop with `Docker Compose X is too old` or `Docker Engine X is too old` when the Compose plugin is older than 2.24.0 or the Docker Engine is older than 25. The services' health checks set `start_interval` (it makes a service count as healthy within seconds of being ready, instead of up to 30 seconds later, which adds up across the three services that wait for one another). An older Compose rejects the key as invalid, and Compose 2.24 or later refuses to create the container on an older engine with `can't set healthcheck.start_interval as feature require Docker Engine v25 or later`. If you run `docker compose` yourself, you'll see those messages instead of the script's.
 
-- **Check**: `docker compose version`
+- **Check**: `docker compose version` and `docker version --format '{{.Server.Version}}'`. Docker Desktop 4.27 or later ships Engine 25 and Compose 2.24.
 - **Solution**: Update Docker. On macOS and Windows, update Docker Desktop (**Check for updates** in its menu). On Linux, install the current `docker-compose-plugin` from Docker's own repository -- the Docker steps in [install-linux.md](install-linux.md) set that repository up -- rather than your distribution's older `docker-compose` or `docker-compose-v2` packages (the Ubuntu/Debian install steps remove those). Then run the deploy again.
 
 ## Old Containers Are Still Running After Switching Deployments

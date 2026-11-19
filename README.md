@@ -21,7 +21,7 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 - macOS, Windows 11 (natively, or via WSL2), or Linux
 - An Intel/AMD or Arm64 machine (including Apple Silicon): the `maptiler/tileserver-gl` and `nginx` images publish `linux/amd64` and `linux/arm64` builds, and Docker builds the MapProxy image on your machine from [`Dockerfile.mapproxy`](Dockerfile.mapproxy)
 - Internet connection, for downloading components and the MBTiles data
-- Docker with Compose 2.17 or newer (`docker compose version` shows it). The deploy script installs a current Docker, and both scripts stop with an explanation if the Compose they find is older
+- Docker Engine 25 or newer with Compose 2.24 or newer (`docker version` and `docker compose version` show them; Docker Desktop 4.27 or later has both). The deploy script installs a current Docker, and both scripts stop with an explanation if what they find is older
 - Minimum 16GB of RAM and 8 cores CPU recommended
 - Disk space: enough for the two MBTiles files described below (four with the EPSG:4087 deployment), **plus** up to 10 GB for nginx's tile cache and room for the MapProxy image. The datasets are updated periodically, so we don't pin sizes here that would go stale -- the `aws s3 ls` command under [Get the Map Data](#get-the-map-data) lists the current ones
 
