@@ -840,7 +840,10 @@ function Repair-ConfigLineEndings {
         (Join-RepoPath 'mapproxy/config/mapproxy.4087.yaml'),
         (Join-RepoPath 'mapproxy/config/logging.ini'),
         (Join-RepoPath 'nginx/config/nginx.conf'),
-        (Join-RepoPath 'tileserver/config/config.json')
+        (Join-RepoPath 'tileserver/config/config.json'),
+        # Read line by line by the MapProxy image build; see .gitattributes.
+        (Join-RepoPath 'mapproxy/conda-linux-64.lock'),
+        (Join-RepoPath 'mapproxy/conda-linux-aarch64.lock')
     )
     foreach ($target in $targets) {
         ConvertTo-UnixLineEndings -Path $target

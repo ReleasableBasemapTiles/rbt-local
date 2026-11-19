@@ -13,6 +13,9 @@
 *.json      text eol=lf
 *.sh        text eol=lf
 Dockerfile* text eol=lf
+# micromamba reads these line by line, and a trailing CR would end up in each
+# package URL and its checksum (see mapproxy/conda-*.lock).
+*.lock      text eol=lf
 # Copied to .env, and a shell script git runs as a hook.
 .env.example text eol=lf
 .githooks/* text eol=lf

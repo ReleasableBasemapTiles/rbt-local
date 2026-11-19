@@ -38,10 +38,10 @@ It runs every check in a group even when one fails, so one run lists all the pro
 
 | Group | What it checks | What it needs |
 | --- | --- | --- |
-| `scripts` | ShellCheck on `deploy.sh`, `.githooks/commit-msg`, `scripts/check.sh` and `.github/scripts/smoke-test.sh`, and a parse of `deploy.ps1` | `shellcheck` and `pwsh` (PowerShell 7) |
+| `scripts` | ShellCheck on `deploy.sh`, `.githooks/commit-msg`, `scripts/check.sh`, `scripts/lock-mapproxy.sh` and `.github/scripts/smoke-test.sh`, and a parse of `deploy.ps1` | `shellcheck` and `pwsh` (PowerShell 7) |
 | `compose` | Each of the four Compose stacks (`docker compose config`), and `nginx.conf` with `nginx -t` in the nginx image the Compose file pins | Docker, with the daemon running |
 | `configs` | Every tracked JSON file is valid, and MapProxy's two configs load and keep the MapProxy rules in [CLAUDE.md](CLAUDE.md) (no storage, `origin: nw`, 512px, only the overlay transparent, one reprojection hop) | The Python virtualenv below |
-| `sync` | Facts the repo states in more than one place agree: the image pins, MapProxy's version, the set of styles and the "six styles" and "18 layers" counts, the `style.json` rules, the public mirror, the uWSGI and nginx timeouts, the Docker minimums | The same virtualenv |
+| `sync` | Facts the repo states in more than one place agree: the image pins, MapProxy's version, that the MapProxy image's conda lock files match `mapproxy/environment.yml` and its inputs match `.dockerignore` and the image workflow, the set of styles and the "six styles" and "18 layers" counts, the `style.json` rules, the public mirror, the uWSGI and nginx timeouts, the Docker minimums | The same virtualenv |
 | `docs` | The docs site builds with `mkdocs build --strict`, and every relative link points at a file that exists | The virtualenv, with MkDocs |
 
 A check whose tool you don't have is skipped with a warning, because few people have every tool. CI fails instead (it sets `CI=true`), so a skipped check still runs before merge.
@@ -74,7 +74,17 @@ rm tileserver/data/*/RBT.mbtiles tileserver/data/*/TERRAIN.mbtiles
 
 Remove the fixtures when you are done. The downloader skips a file that is already there (`RBT.mbtiles` unless the mirror's copy is newer, `TERRAIN.mbtiles` always), so a leftover fixture would stop `./deploy.sh --download` from fetching the real data.
 
-Pull requests that change `Dockerfile.mapproxy`, `mapproxy/environment.yml` or `mapproxy/docker/app.py` also build the MapProxy image.
+Pull requests that change `Dockerfile.mapproxy`, `.dockerignore`, `mapproxy/conda-linux-64.lock`, `mapproxy/conda-linux-aarch64.lock` or `mapproxy/docker/app.py` also build the MapProxy image, and merging one publishes it (`8.1.0` and `latest`), which the charts repo deploys, so say in the pull request that it changes the image and a maintainer can coordinate the merge with that repo.
+
+The image installs the exact conda packages in the two lock files, not whatever conda-forge resolves on the day, so a build is the same every time. To add or change a dependency, edit [`mapproxy/environment.yml`](mapproxy/environment.yml), then regenerate the lock files. It needs only Docker:
+
+```bash
+scripts/lock-mapproxy.sh                # solves for linux-64 and linux-aarch64 in the image's own micromamba
+git diff --stat mapproxy/               # every package moves to the newest version the specs allow
+docker compose build mapproxy           # installs from the lock file; asserts PROJ >= 9.8 and EPSG:4087
+```
+
+Commit `environment.yml` and both lock files together; `scripts/check.sh sync` fails when they disagree. The build above covers your machine's architecture, and the pull request build covers linux/amd64.
 
 ## Prefer squash merge
 

@@ -1,6 +1,6 @@
 # Used by Dockerfile.mapproxy (context .). An allowlist: everything is left
-# out of the build context except the two files the Dockerfile COPYs
-# (mapproxy/environment.yml and mapproxy/docker/app.py). A list of what to
+# out of the build context except the files the Dockerfile COPYs (the two
+# mapproxy/conda-*.lock files and mapproxy/docker/app.py). A list of what to
 # exclude never keeps up with the repository -- site/, site-docs/, images/
 # and a local .venv/ are all large and were all being sent to the Docker
 # daemon on every build -- whereas a new file the image needs fails the
@@ -12,5 +12,6 @@
 # tileserver/{config,fonts,styles}, mapproxy/{config,data,locks,tile_locks}
 # and nginx.
 *
-!mapproxy/environment.yml
+!mapproxy/conda-linux-64.lock
+!mapproxy/conda-linux-aarch64.lock
 !mapproxy/docker/app.py
