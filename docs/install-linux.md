@@ -97,9 +97,7 @@ git clone https://github.com/ReleasableBasemapTiles/rbt-local.git && \
 
 # The mapproxy container runs as uid/gid 1000 (Dockerfile.mapproxy) and
 # writes to these directories, so they belong to 1000:1000 whatever your
-# own uid is. mapproxy/data isn't in the repo, so create it first.
-# (./deploy.sh runs these same steps.)
-mkdir -p mapproxy/data
+# own uid is. (./deploy.sh runs these same steps.)
 sudo chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks
 # Directories 775, files 664. An older version of this step made the .txt
 # files in mapproxy/locks and mapproxy/tile_locks executable, which git

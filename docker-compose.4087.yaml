@@ -46,8 +46,9 @@ services:
       - "${BIND_ADDR:-0.0.0.0}:${TILESERVER_4087_PORT:-8083}:8080"
     volumes:
       - ./tileserver/data/4087:/data
-      - ./tileserver/fonts:/fonts
-      - ./tileserver/styles:/styles
+      # Read-only, as in tileservergl (docker-compose.yaml).
+      - ./tileserver/fonts:/fonts:ro
+      - ./tileserver/styles:/styles:ro
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped

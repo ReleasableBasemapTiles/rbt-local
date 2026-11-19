@@ -131,8 +131,22 @@ This applies to the `--4087`/`-Use4087` stack ([docker-compose.4087.yaml](../doc
 
 On **Linux or WSL2**, this is almost always a file-permission mismatch between the host directories and the container's user (uid/gid `1000`).
 
-- **Solution (Linux/WSL2)**: Re-run the permissions step (`mkdir -p mapproxy/data`, then `chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks`) from the [Linux](install-linux.md) or [Windows WSL2](install-windows.md#option-b-wsl2) setup instructions, or `./deploy.sh --perm`, then `docker compose restart mapproxy`. If the log shows a configuration error instead, see the 502 section above.
+- **Solution (Linux/WSL2)**: Re-run the permissions step (`chown -R 1000:1000 mapproxy/data mapproxy/locks mapproxy/tile_locks`) from the [Linux](install-linux.md) or [Windows WSL2](install-windows.md#option-b-wsl2) setup instructions, or `./deploy.sh --perm`, then `docker compose restart mapproxy`. If the log shows a configuration error instead, see the 502 section above.
 - **Solution (macOS or native Windows)**: There's no uid/gid mismatch to fix here -- Docker Desktop's VM writes to bind-mounted host directories regardless of host file permissions/ACLs. Instead, run `docker compose logs mapproxy` and check Docker Desktop's **Settings -> Resources -> File sharing** includes the drive/volume you cloned this repository onto.
+
+## `git pull` Fails with "unable to create file mapproxy/data/.txt" (Linux/WSL2)
+
+Newer versions of this repository track a placeholder file, `mapproxy/data/.txt`, so that directory exists in a fresh clone (the `locks` and `tile_locks` directories already worked this way). On an older Linux or WSL2 clone, the permissions step gave `mapproxy/data` to uid/gid `1000`, and if you aren't that user, `git pull` can't create the new file in it.
+
+- **Solution**: Take the directory back, pull, then hand it to the container again:
+
+  ```bash
+  sudo chown -R "$USER": mapproxy/data
+  git pull
+  ./deploy.sh --perm
+  ```
+
+  The last command runs the same `chown` and `chmod` as the install guides.
 
 ## Windows (WSL2): Containers Are Extremely Slow, or Permission Changes Don't Stick
 

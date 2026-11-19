@@ -9,11 +9,13 @@ site/
 site-docs/
 
 # What the stack writes into its bind mounts at runtime (nginx's tile cache
-# and temp files, MapProxy's locks). The tracked .txt files keep the
-# directories in a fresh clone.
+# and temp files, MapProxy's locks and data). The tracked .txt files keep the
+# directories in a fresh clone, so a bind mount never has to be created by
+# Docker (as root, where the mapproxy user can't write to it).
 nginx/cache/*
 !nginx/cache/.txt
-mapproxy/data/
+mapproxy/data/*
+!mapproxy/data/.txt
 mapproxy/locks/*
 !mapproxy/locks/.txt
 mapproxy/tile_locks/*

@@ -61,8 +61,11 @@ services:
       # EPSG:3857 (Web Mercator) MBTiles -- see docker-compose.4087.yaml's
       # tileservergl4087 service, which mounts tileserver/data/4087 instead.
       - ./tileserver/data/3857:/data
-      - ./tileserver/fonts:/fonts
-      - ./tileserver/styles:/styles
+      # Read-only: TileserverGL only reads fonts and styles. Both are tracked
+      # in git (the styles are synced from upstream), so a container that
+      # could write to them would silently dirty the checkout.
+      - ./tileserver/fonts:/fonts:ro
+      - ./tileserver/styles:/styles:ro
       - ./tileserver/config:/config:ro
     command: ["-c", "/config/config.json"]
     restart: unless-stopped
