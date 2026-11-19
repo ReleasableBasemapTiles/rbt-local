@@ -120,6 +120,7 @@ jobs:
           /bin/bash --version | head -1
           /bin/bash -n deploy.sh
           /bin/bash -n scripts/check.sh
+          /bin/bash -n .github/scripts/smoke-test.sh
           /bin/bash deploy.sh --help > /dev/null
 
   actionlint:

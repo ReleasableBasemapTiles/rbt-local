@@ -38,7 +38,7 @@ It runs every check in a group even when one fails, so one run lists all the pro
 
 | Group | What it checks | What it needs |
 | --- | --- | --- |
-| `scripts` | ShellCheck on `deploy.sh`, `.githooks/commit-msg` and `scripts/check.sh`, and a parse of `deploy.ps1` | `shellcheck` and `pwsh` (PowerShell 7) |
+| `scripts` | ShellCheck on `deploy.sh`, `.githooks/commit-msg`, `scripts/check.sh` and `.github/scripts/smoke-test.sh`, and a parse of `deploy.ps1` | `shellcheck` and `pwsh` (PowerShell 7) |
 | `compose` | Each of the four Compose stacks (`docker compose config`), and `nginx.conf` with `nginx -t` in the nginx image the Compose file pins | Docker, with the daemon running |
 | `configs` | Every tracked JSON file is valid, and MapProxy's two configs load and keep the MapProxy rules in [CLAUDE.md](CLAUDE.md) (no storage, `origin: nw`, 512px, only the overlay transparent, one reprojection hop) | The Python virtualenv below |
 | `sync` | Facts the repo states in more than one place agree: the image pins, MapProxy's version, the set of styles and the "six styles" and "18 layers" counts, the `style.json` rules, the public mirror, the uWSGI and nginx timeouts, the Docker minimums | The same virtualenv |
@@ -55,11 +55,24 @@ python3 -m venv ~/.venvs/rbt-local
 
 `scripts/check.sh` finds it there, or in a `.venv/` at the repo root (gitignored) if you'd rather keep one in the repo. To use another Python, set `PYTHON=/path/to/python`. The MapProxy version comes from `Dockerfile.mapproxy`, so the check always runs against the version the image installs.
 
-CI also runs three checks that need other machines, so the script doesn't:
+CI also runs four checks that the script can't, because they need other machines or a running stack:
 
 - `deploy.ps1` in Windows PowerShell 5.1 (the `windows` job): `powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy.ps1 -Help`, and PSScriptAnalyzer at Error severity.
 - `deploy.sh` under the bash 3.2 that macOS ships (the `macos` job): `/bin/bash -n deploy.sh`, and `/bin/bash deploy.sh --help`.
 - The workflows themselves, with [actionlint](https://github.com/rhysd/actionlint): `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color`.
+- A full-stack smoke test ([smoke.yml](.github/workflows/smoke.yml)), on pull requests that touch the Compose files, `nginx/`, `mapproxy/`, `tileserver/config/`, `tileserver/styles/`, `Dockerfile.mapproxy` or the deploy scripts. It writes tiny fixture MBTiles (the real ones are hundreds of GB), deploys the default and the EPSG:4087 stack with `./deploy.sh --perm --deploy`, runs `./deploy.sh --check`, then asks the stack for tiles: `/healthz`, `styles.json`, all 18 layers in the capabilities, a GetMap that is an nginx `MISS` and then a `HIT`, the reprojected layers, the `/tileservergl` redirect, and a `MISS` again after `./deploy.sh --refresh`. The fixtures draw only each style's background, so it proves the stack works and says nothing about the map data.
+
+To run the smoke test on your own machine, write the fixtures, deploy, and point the script at the stack. It needs Docker and, like any deploy, the ports free:
+
+```bash
+python3 .github/scripts/make-fixture-mbtiles.py   # writes tileserver/data/{3857,4087}/*.mbtiles; stops if real data is there
+./deploy.sh --deploy                              # add --4087 for the EPSG:4087 stack
+.github/scripts/smoke-test.sh                     # add --4087 to match; it ends with ./deploy.sh --refresh
+docker compose down --remove-orphans              # same -f flags as the deploy printed, for --4087
+rm tileserver/data/*/RBT.mbtiles tileserver/data/*/TERRAIN.mbtiles
+```
+
+Remove the fixtures when you are done. The downloader skips a file that is already there (`RBT.mbtiles` unless the mirror's copy is newer, `TERRAIN.mbtiles` always), so a leftover fixture would stop `./deploy.sh --download` from fetching the real data.
 
 Pull requests that change `Dockerfile.mapproxy`, `mapproxy/environment.yml` or `mapproxy/docker/app.py` also build the MapProxy image.
 

@@ -133,7 +133,7 @@ if ($errors) { exit 1 }
 check_scripts() {
   section "scripts"
   if have_tool shellcheck "brew install shellcheck, or apt install shellcheck"; then
-    run shellcheck deploy.sh .githooks/commit-msg scripts/check.sh
+    run shellcheck deploy.sh .githooks/commit-msg scripts/check.sh .github/scripts/smoke-test.sh
   fi
   if have_tool pwsh "brew install --cask powershell, or https://aka.ms/powershell"; then
     echo "+ pwsh -NoProfile -Command <parse deploy.ps1>"
