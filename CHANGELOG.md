@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Smooth first-run onboarding and add an operations guide
+- Bump mkdocs-material from 9.7.7 to 9.8.1
 
 ## [3.1.0] - 2026-11-12
 
