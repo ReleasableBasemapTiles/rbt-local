@@ -21,6 +21,7 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 - macOS, Windows 11 (natively, or via WSL2), or Linux
 - An Intel/AMD or Arm64 machine (including Apple Silicon): the `maptiler/tileserver-gl` and `nginx` images publish `linux/amd64` and `linux/arm64` builds, and Docker builds the MapProxy image on your machine from [`Dockerfile.mapproxy`](Dockerfile.mapproxy)
 - Internet connection, for downloading components and the MBTiles data
+- Docker with Compose 2.17 or newer (`docker compose version` shows it). The deploy script installs a current Docker, and both scripts stop with an explanation if the Compose they find is older
 - Minimum 16GB of RAM and 8 cores CPU recommended
 - Disk space: enough for the two MBTiles files described below (four with the EPSG:4087 deployment), **plus** up to 10 GB for nginx's tile cache and room for the MapProxy image. The datasets are updated periodically, so we don't pin sizes here that would go stale -- the `aws s3 ls` command under [Get the Map Data](#get-the-map-data) lists the current ones
 
@@ -59,7 +60,7 @@ This guide walks through deploying RBT with **Docker Compose** on a single host 
 
 4. **Open the style previews** at `http://localhost:8082/tileservergl/` in a browser. If you see the six RBT styles, RBT is working. [Verifying Your Installation](docs/verify.md) has the full checklist, and the script's last lines print the commands for viewing logs and stopping RBT.
 
-Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, or the deployment options below.
+Both scripts are safe to re-run: package installs are skipped when already present, `TERRAIN.mbtiles` only downloads once, and `RBT.mbtiles` re-downloads automatically whenever the S3 object is newer than your local copy. Run either with `--help` / `-Help` to see every available flag -- for example `--init`/`-Init` to just install prerequisites, `--refresh`/`-Refresh` after changing MBTiles or styles, or the deployment options below. Each run starts by printing which steps it will perform. `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) only choose the deployment: on their own they still run every step, so pair them with a step, such as `./deploy.sh --4087 --deploy`.
 
 Prefer to see, or run, each step by hand instead of via the script? See [Installing on macOS](docs/install-macos.md), [Installing on Linux](docs/install-linux.md), or [Installing on Windows 11](docs/install-windows.md).
 
@@ -88,6 +89,8 @@ On later runs the download step only fetches what changed:
 - `RBT.mbtiles` is downloaded again whenever the mirror's copy is newer than yours.
 - `--force` / `-Force` downloads both again regardless.
 - Whenever a file is downloaded, the script restarts any running TileserverGL and empties nginx's tile cache, so a running stack serves the new data straight away.
+
+Around each download the script also protects you from a full disk and from a damaged file. Before it starts it asks the mirror how big the file is and stops, naming the shortfall, if the drive doesn't have that much free space. It deletes any leftover partial file from an interrupted run (the AWS CLI can't resume one). And afterwards it checks that the file is the size the mirror reported, removing it if not, so a truncated copy can't pass for a finished one. If the mirror's size can't be read, the script says so and carries on without those checks.
 
 To download or update just the data, without re-running the other steps:
 

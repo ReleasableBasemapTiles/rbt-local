@@ -56,8 +56,14 @@ curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "a
     sudo ./aws/install --update && \
     rm -rf aws awscliv2.zip;
 
-# Remove old Docker versions (if any exist)
-sudo apt-get remove docker docker-engine docker.io containerd runc;
+# Remove old Docker packages, if any are installed. Only installed ones are
+# named, because apt-get stops at a package it has never heard of
+for pkg in docker docker-engine docker.io docker-doc docker-compose \
+    docker-compose-v2 podman-docker containerd runc; do
+    if [[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null)" == ii* ]]; then
+        sudo apt-get remove -y "$pkg";
+    fi
+done;
 
 # Add Docker's official repository: linux/ubuntu (and the Ubuntu release)
 # on Ubuntu and its derivatives, linux/debian on Debian

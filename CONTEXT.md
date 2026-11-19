@@ -120,7 +120,10 @@ _Avoid_: mode, variant, profile (Compose profiles aren't used)
 `mapproxy/config/mapproxy.4087.yaml`: `base: mapproxy.yaml` plus only the EPSG:4087 grid, Sources and caches, and new sources for the EPSG:4326 caches.
 
 **Deploy Step**:
-One stage of the deploy scripts, always run in this order: Init, Download, Perm (`deploy.sh`) or Prep (`deploy.ps1`), Refresh, Deploy. With no step flags, all of them run, and Refresh runs only when Download fetched new data.
+One stage of the deploy scripts, always run in this order: Init, Download, Perm (`deploy.sh`) or Prep (`deploy.ps1`), Refresh, Deploy. With no step flags, all of them run, and Refresh runs only when Download fetched new data. `--4087`, `--no-nginx` and `--force` (`-Use4087`, `-NoNginx`, `-Force`) are modifiers, not steps: on their own they still run every step.
+
+**Orphan**:
+A container in the Compose project that the files named in the current `-f` list no longer define, such as `tileservergl4087` after leaving the EPSG:4087 Deployment, or `nginx` after moving to Without nginx. `up -d` leaves orphans running unless given `--remove-orphans`; the deploy scripts' Deploy step passes it.
 
 **Prefix**:
 The path nginx routes on and strips (`/mapproxy`, `/tileservergl`, `/tileservergl4087`), then passes back to the backend so the URLs it generates keep it. A request to a service's own port uses its native, unprefixed paths.

@@ -106,9 +106,21 @@ All other ports (`NGINX_PORT`, `MAPPROXY_PORT`, `TILESERVER_PORT`) are unchanged
 
 ## Switching between stacks
 
-Both stacks are the same Compose project, so switching to the 4087 stack just recreates `mapproxy` and adds `tileservergl4087`. Switching back leaves `tileservergl4087` running as an orphan (neither the plain `docker compose up` nor the deploy scripts remove it), so take the 4087 stack down first:
+Both stacks are the same Compose project, so switching to the 4087 stack just recreates `mapproxy` and adds `tileservergl4087`. Switching back is just as direct with the deploy scripts: `--deploy` runs `docker compose up -d --wait --remove-orphans`, which removes `tileservergl4087` (Compose calls a container the new files no longer define an *orphan*):
 
 ```bash
-docker compose down --remove-orphans   # removes every container in the project, orphans included
-./deploy.sh                            # or: docker compose up -d
+./deploy.sh --deploy                   # back to the default stack; add --no-nginx if you want that
 ```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1 -Deploy
+```
+
+A plain `docker compose up -d` doesn't remove orphans, so if you start the stacks by hand, take the 4087 stack down first:
+
+```bash
+docker compose -f docker-compose.yaml -f docker-compose.4087.yaml -f docker-compose.override.yaml down --remove-orphans
+docker compose up -d
+```
+
+The deploy scripts warn before they do this: a run without `--4087`/`-Use4087` while `tileservergl4087` is running says so up front, so you can press Ctrl+C and re-run with the flag.

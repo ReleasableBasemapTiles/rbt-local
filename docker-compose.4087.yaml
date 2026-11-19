@@ -12,7 +12,9 @@
 # or run `./deploy.sh --4087` / `.\deploy.ps1 -Use4087`, or set COMPOSE_FILE
 # in .env (see .env.example) so plain `docker compose ...` picks the files.
 # Going back to the default stack leaves tileservergl4087 running as an
-# orphan, so switch with `docker compose down --remove-orphans` first.
+# orphan unless `up` is given --remove-orphans, which ./deploy.sh --deploy
+# does. With a plain `docker compose up -d`, switch with
+# `docker compose down --remove-orphans` first.
 
 # Log rotation, as in docker-compose.yaml (YAML anchors don't cross files).
 x-logging: &logging

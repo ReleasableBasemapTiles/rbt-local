@@ -102,6 +102,7 @@ These facts are stated in more than one place. When you change one, grep for the
 | An image pin | `tileserver-gl` is pinned in both `docker-compose.yaml` and `docker-compose.4087.yaml` (keep them equal). The nginx tag is also in CONTRIBUTING's `nginx -t` line. MapProxy's version is `ARG MAPPROXY_VERSION` in `Dockerfile.mapproxy`, where CI reads it, and it's repeated in the `rbt-mapproxy:8.1.0` image name in `docker-compose.yaml`, the GHCR tag in `mapproxy-image.yml` (which the charts repo deploys), CONTRIBUTING, and the `8.1.0` mentions in this file and CONTEXT.md |
 | The public mirror | `PUBLIC_S3_*` in `deploy.sh`, `$script:PublicS3*` in `deploy.ps1`, README "Get the Map Data" |
 | TileserverGL's renderer pool sizes | `docs/troubleshooting.md` |
+| A Compose flag or feature a script or Compose file starts using (`--wait-timeout` needs 2.17.0) | `MIN_COMPOSE_VERSION` in `deploy.sh`, `$script:MinComposeVersion` in `deploy.ps1`, README "Requirements", and `docs/troubleshooting.md` "Docker Compose Is Too Old" |
 | Added a docs page | `mkdocs.yml` `nav` -- `mkdocs build --strict` fails otherwise |
 | Added a config file that must stay LF | `.gitattributes`, and `Repair-ConfigLineEndings` in `deploy.ps1` |
 | The commit conventions | CONTRIBUTING.md, `.cursor/rules/conventional-commits.mdc`, `.githooks/commit-msg`, `commitlint.config.mjs`, `.github/workflows/lint-pr.yml`, `cliff.toml` (how types map to changelog sections), `.github/dependabot.yml` (its commit prefixes), `.github/pull_request_template.md`, this file |
@@ -112,7 +113,7 @@ Each of these is explained in a comment where it lives. Keep those comments.
 
 **Compose**
 - No `-f` flags means base plus override (the default stack), unless `.env` sets `COMPOSE_FILE`; any `-f` drops the override. CI validates all four combinations.
-- Switching away from a 4087 stack leaves `tileservergl4087` running as an orphan, so run `docker compose down --remove-orphans` first.
+- Switching away from a 4087 stack leaves `tileservergl4087` running as an orphan unless `up` gets `--remove-orphans`. The deploy scripts' `--deploy`/`-Deploy` passes it; a hand-run `docker compose up -d` doesn't, so run `docker compose down --remove-orphans` first.
 - The `x-logging` block is repeated in each file because YAML anchors don't cross files. Keep the copies identical.
 - `container_name`s are fixed, and services reach each other by name on `rbt-network`.
 
@@ -140,6 +141,9 @@ Each of these is explained in a comment where it lives. Keep those comments.
 - It runs under macOS's `/bin/bash` 3.2 with `set -euo pipefail`. That rules out `mapfile`, associative arrays, `${var,,}`, and expanding an array that may be empty; wrap that in a function, as `as_root` and `s3_aws` do.
 - GNU and BSD `stat` and `date` differ: use `file_mtime_epoch`, `format_epoch` and `parse_iso8601_epoch`.
 - On Linux, Compose runs through `sudo`, which drops exported variables, so Compose settings belong in `.env`. Downloads run unprivileged, with the user's own AWS credential chain.
+- `.env` is parsed the way Compose parses it: quotes are stripped, an unquoted value ends at the first ` #`. Keep `load_env_file` and `Import-DotEnv` in step with each other.
+- A download is bracketed by checks: partial `<name>.<8 hex>` files are removed, the drive must have the object's `ContentLength` free, and the finished file must be that size. When the mirror's metadata can't be read, warn and skip those checks; never block a download that would have worked.
+- The checks that need no Docker (`require_mbtiles`, `check_uwsgi_settings`) run before anything slow in the deploy step, so a mistake fails in seconds.
 - Every step must stay safe to re-run, and the script must stay shellcheck-clean.
 
 **deploy.ps1**

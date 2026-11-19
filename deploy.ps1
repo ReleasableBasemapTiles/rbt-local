@@ -47,8 +47,10 @@ of the order given on the command line):
   -Download  Download RBT.mbtiles/TERRAIN.mbtiles into
              tileserver\data\3857\ -- from the public RBT mirror (no AWS
              credentials needed) unless S3_BUCKET_RBT/S3_BUCKET_TERRAIN
-             point at your own bucket (see below). Whenever this actually
-             fetches a file, -Refresh runs too.
+             point at your own bucket (see below). Before each download it
+             checks that the disk has room, and afterwards that the file is
+             the size the mirror reports. Whenever this actually fetches a
+             file, -Refresh runs too.
   -Prep      Create the mapproxy/nginx/tileserver runtime directories and
              normalize their config files to LF line endings (uWSGI refuses
              to start if uwsgi.ini has Windows CRLF endings).
@@ -58,8 +60,15 @@ of the order given on the command line):
              is running. Run this yourself after changing MBTiles or styles
              by hand.
   -Deploy    Start Docker Desktop if it isn't running, then run
-             `docker compose up -d --wait`, failing if any service doesn't
-             become healthy.
+             `docker compose up -d --wait --remove-orphans`, failing if any
+             service doesn't become healthy. --remove-orphans also removes
+             containers left over from a different deployment, such as
+             tileservergl4087 after leaving the -Use4087 stack.
+
+The modifiers below are not steps, so on their own they still mean "run every
+step" -- including installing prerequisites (which needs an elevated session)
+and downloading map data. Pair them with a step, such as -Deploy.
+
   -Force     Re-download mbtiles even if already present (only relevant
              together with -Download, or with no step switches).
   -NoNginx   Deploy mapproxy and tileservergl only, without the local nginx
@@ -212,10 +221,26 @@ function Import-DotEnv {
         $key = $Matches[2]
         $value = $Matches[3]
 
-        if ($value -match '^"(.*)"$') {
+        # Parse the value the way Compose does, so the script and Compose
+        # agree on what a line means. A quoted value ends at its closing
+        # quote, and anything after it may only be an inline comment
+        # (KEY="a b" # note). An unquoted value ends at the first " #", and
+        # its surrounding whitespace is trimmed. A closing quote followed by
+        # other text isn't a quoted value at all, so it falls back to the
+        # old rule (strip one layer of quotes from the whole value) rather
+        # than guessing. Mirrors deploy.sh's load_env_file.
+        if ($value -match '^"([^"]*)"\s*(#.*)?$') {
+            $value = $Matches[1]
+        } elseif ($value -match "^'([^']*)'\s*(#.*)?$") {
+            $value = $Matches[1]
+        } elseif ($value -match '^"(.*)"$') {
             $value = $Matches[1]
         } elseif ($value -match "^'(.*)'$") {
             $value = $Matches[1]
+        } else {
+            # A "#" that touches the value (a URL fragment, a password)
+            # stays; only whitespace-then-# starts a comment.
+            $value = ($value -replace '\s#.*$', '').Trim()
         }
 
         $existing = [System.Environment]::GetEnvironmentVariable($key)
@@ -292,9 +317,19 @@ function Install-Chocolatey {
     }
 }
 
+# The AWS CLI's version line. 2>&1 folds stderr into the output, and on
+# Windows PowerShell 5.1 each stderr line becomes an error record, which is
+# fatal under 'Stop' -- so anything the AWS CLI printed to stderr would abort
+# the run over a harmless message. 'Continue' (local to this function) keeps
+# it as text. See Test-DockerEngineRunning.
+function Get-AwsVersionText {
+    $ErrorActionPreference = 'Continue'
+    return "$(aws --version 2>&1)"
+}
+
 function Install-AwsCli {
     if (Test-CommandExists 'aws') {
-        Write-DeployLog "AWS CLI already installed ($(aws --version 2>&1)); skipping"
+        Write-DeployLog "AWS CLI already installed ($(Get-AwsVersionText)); skipping"
         return
     }
 
@@ -469,25 +504,114 @@ function Get-S3SourceArgs {
     return @()
 }
 
-# Returns the S3 object's LastModified time (UTC) as a [datetime], or $null
-# if it can't be read -- e.g. missing object, or an IAM policy that allows
-# GetObject but not this HeadObject call. $AwsArgs comes from
+# Returns [pscustomobject]@{ LastModifiedUtc = [datetime]; Size = [long] }
+# for an S3 object, or $null if it can't be read -- e.g. missing object, or
+# an IAM policy that allows GetObject but not this HeadObject call. One call
+# answers both "is the mirror's copy newer?" and "how much room does the
+# download need, and did all of it arrive?". $AwsArgs comes from
 # Get-S3SourceArgs.
-function Get-RemoteMTimeUtc {
+function Get-RemoteObjectInfo {
     param([string]$RemoteUri, [string[]]$AwsArgs)
     # A failed head-object prints to stderr, which 2>$null would make fatal
     # under 'Stop' on Windows PowerShell 5.1 -- see Test-DockerEngineRunning.
     $ErrorActionPreference = 'Continue'
     $bucket = Get-S3BucketName $RemoteUri
     $key = Get-S3ObjectKey $RemoteUri
-    $lastModified = aws @AwsArgs s3api head-object --bucket $bucket --key $key --query 'LastModified' --output text 2>$null
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($lastModified) -or $lastModified -eq 'None') {
+    $info = aws @AwsArgs s3api head-object --bucket $bucket --key $key --query '[LastModified, ContentLength]' --output text 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace("$info")) {
         return $null
     }
+    $parts = @("$info".Trim() -split '\s+')
+    if ($parts.Count -lt 2 -or $parts[0] -eq 'None' -or $parts[1] -notmatch '^\d+$') {
+        return $null
+    }
+    # InvariantCulture: S3 timestamps are ISO 8601 whatever the Windows
+    # region setting is, and a culture with another calendar or digit set
+    # would misparse them.
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
     try {
-        return [DateTimeOffset]::Parse($lastModified).UtcDateTime
+        return [pscustomobject]@{
+            LastModifiedUtc = [DateTimeOffset]::Parse($parts[0], $culture).UtcDateTime
+            Size            = [long]::Parse($parts[1], $culture)
+        }
     } catch {
         return $null
+    }
+}
+
+# Prints a byte count the way people read it: "1.4 GiB", "850 MiB".
+function Format-Bytes {
+    param([long]$Bytes)
+    $culture = [System.Globalization.CultureInfo]::InvariantCulture
+    if ($Bytes -ge 1GB) {
+        return "$(([math]::Round($Bytes / 1GB, 1)).ToString('0.0', $culture)) GiB"
+    }
+    if ($Bytes -ge 1MB) {
+        return "$(([math]::Round($Bytes / 1MB)).ToString('0', $culture)) MiB"
+    }
+    return "$Bytes bytes"
+}
+
+# Free bytes on the drive that holds $Directory, or $null when that can't be
+# read (a UNC path has no drive for DriveInfo to describe).
+function Get-FreeSpaceBytes {
+    param([string]$Directory)
+    try {
+        $fullPath = (Resolve-Path -LiteralPath $Directory -ErrorAction Stop).ProviderPath
+        $root = [System.IO.Path]::GetPathRoot($fullPath)
+        return (New-Object System.IO.DriveInfo($root)).AvailableFreeSpace
+    } catch {
+        return $null
+    }
+}
+
+# Deletes the temporary files an interrupted `aws s3 cp` leaves next to
+# $Dest. The AWS CLI downloads to "<name>.<8 hex digits>" and renames it into
+# place only when the whole file has arrived; it can't resume, so a leftover
+# one is just disk space (several hundred GB of it) that the retry would
+# need on top of its own. Only that exact suffix is matched, so SQLite's
+# -journal/-wal/-shm companions (which use a hyphen) and the real file are
+# never touched.
+function Remove-PartialDownloads {
+    param([string]$Dest)
+    $dir = Split-Path -Parent $Dest
+    $name = Split-Path -Leaf $Dest
+    $pattern = '^' + [regex]::Escape($name) + '\.[0-9A-Fa-f]{8}$'
+    $partials = @(Get-ChildItem -LiteralPath $dir -File -Force | Where-Object { $_.Name -match $pattern })
+    foreach ($partial in $partials) {
+        Write-WarningLine "Removing the leftover partial download $($partial.FullName) from an interrupted run"
+        Remove-Item -LiteralPath $partial.FullName -Force
+    }
+}
+
+# Stops before a download that can't fit. The AWS CLI writes the new file
+# next to any existing one and replaces it at the end, so a re-download needs
+# the full size free even though the old copy is about to go.
+function Assert-FreeSpace {
+    param([string]$Directory, [long]$Needed, [string]$Filename)
+    $free = Get-FreeSpaceBytes -Directory $Directory
+    if ($null -eq $free) {
+        Write-WarningLine "Couldn't read the free disk space for $Directory, so the room check for $Filename is skipped"
+        return
+    }
+    if ($free -lt $Needed) {
+        Write-ErrorAndExit "Not enough free disk space for ${Filename}: it needs $(Format-Bytes $Needed) and $Directory has $(Format-Bytes $free) free. Free up space (a re-download needs room for the new copy while the old one is still in place), then re-run .\deploy.ps1 -Download. See docs/troubleshooting.md."
+    }
+}
+
+# Removes the file and stops when it isn't the size the mirror reported: a
+# truncated copy can pass for a finished one (the next run would see a file
+# newer than the mirror's and skip it), and the tileserver would fail on it
+# much later and less clearly. $Expected is $null when the size is unknown.
+function Assert-DownloadedSize {
+    param([string]$Dest, $Expected)
+    if ($null -eq $Expected) {
+        return
+    }
+    $actual = (Get-Item -LiteralPath $Dest).Length
+    if ($actual -ne $Expected) {
+        Remove-Item -LiteralPath $Dest -Force
+        Write-ErrorAndExit "$Dest is $actual bytes but the mirror's copy is $Expected, so it was removed. Re-run .\deploy.ps1 -Download to fetch it again."
     }
 }
 
@@ -497,7 +621,10 @@ function Get-RemoteMTimeUtc {
 # file alone afterwards (used for TERRAIN.mbtiles, which never changes).
 # -Force always re-downloads regardless of CheckRemote. PublicPrefix is the
 # public mirror's s3:// prefix for this file, used when BucketEnvVarName is
-# unset.
+# unset. Before a download it clears partial files and checks the disk has
+# room; after it, that the size matches. If the mirror's metadata can't be
+# read those two checks are skipped with a warning rather than blocking a
+# download that would have worked.
 function Get-MbtilesFile {
     param(
         [string]$BucketEnvVarName,
@@ -520,6 +647,8 @@ function Get-MbtilesFile {
     $remoteUri = "$prefix/$filename"
     $destExists = (Test-Path $Dest -PathType Leaf) -and ((Get-Item $Dest).Length -gt 0)
     $needDownload = $true
+    $remoteInfo = $null
+    $infoRead = $false
 
     if ($script:ForceDownload) {
         $needDownload = $true
@@ -529,8 +658,10 @@ function Get-MbtilesFile {
         Write-DeployLog "$filename already present at $Dest; skipping (use -Force to re-download)"
         $needDownload = $false
     } else {
-        $remoteMTime = Get-RemoteMTimeUtc -RemoteUri $remoteUri -AwsArgs $awsArgs
-        if ($null -ne $remoteMTime) {
+        $infoRead = $true
+        $remoteInfo = Get-RemoteObjectInfo -RemoteUri $remoteUri -AwsArgs $awsArgs
+        if ($null -ne $remoteInfo) {
+            $remoteMTime = $remoteInfo.LastModifiedUtc
             $localMTime = (Get-Item $Dest).LastWriteTimeUtc
             if ($remoteMTime -gt $localMTime) {
                 Write-DeployLog "$filename in S3 was modified $remoteMTime UTC (newer than the local copy); re-downloading"
@@ -549,15 +680,34 @@ function Get-MbtilesFile {
         return
     }
 
-    Write-DeployLog "Downloading $filename from $remoteUri ($source)"
+    # The size is needed whichever way this got here; read it now unless the
+    # up-to-date check above already did (or already failed to).
+    if (-not $infoRead) {
+        $remoteInfo = Get-RemoteObjectInfo -RemoteUri $remoteUri -AwsArgs $awsArgs
+    }
+
+    Remove-PartialDownloads -Dest $Dest
+    $expectedSize = $null
+    if ($null -ne $remoteInfo) {
+        $expectedSize = $remoteInfo.Size
+        Assert-FreeSpace -Directory (Split-Path -Parent $Dest) -Needed $expectedSize -Filename $filename
+        Write-DeployLog "Downloading $filename ($(Format-Bytes $expectedSize)) from $remoteUri ($source)"
+    } else {
+        Write-WarningLine "Couldn't read $filename's size from $source, so the free-space and size checks are skipped"
+        Write-DeployLog "Downloading $filename from $remoteUri ($source)"
+    }
     aws @awsArgs s3 cp $remoteUri $Dest
     if ($LASTEXITCODE -ne 0) {
-        Write-ErrorAndExit "aws s3 cp $remoteUri failed (exit $LASTEXITCODE)"
+        Write-ErrorAndExit "Downloading $filename failed (aws s3 cp exit $LASTEXITCODE). Re-run .\deploy.ps1 -Download to try again -- the AWS CLI starts the file over, and the partial copy is removed first."
     }
+    Assert-DownloadedSize -Dest $Dest -Expected $expectedSize
     $script:DataUpdated = $true
 }
 
 function Get-AllMbtiles {
+    if (-not (Test-CommandExists 'aws')) {
+        Write-ErrorAndExit "The AWS CLI (aws) isn't installed, or this PowerShell window doesn't see it yet. Run .\deploy.ps1 -Init from an elevated PowerShell to install it (then open a new window), or install it yourself (docs/install-windows.md), then re-run."
+    }
     New-Item -ItemType Directory -Force -Path $script:DataDir3857 | Out-Null
 
     Get-MbtilesFile -BucketEnvVarName 'S3_BUCKET_RBT' -Dest $script:RbtFile3857 -CheckRemote $true -PublicPrefix $script:PublicS3Prefix3857
@@ -603,6 +753,11 @@ function Initialize-RuntimeDirectories {
         'nginx/cache',
         'tileserver/data/3857'
     )
+    # The EPSG:4087 stack bind-mounts tileserver/data/4087 as well, so create
+    # it here like the 3857 one.
+    if ($script:Use4087) {
+        $dirs += 'tileserver/data/4087'
+    }
     foreach ($dir in $dirs) {
         $fullPath = Join-RepoPath $dir
         if (-not (Test-Path $fullPath)) {
@@ -630,9 +785,21 @@ function ConvertTo-UnixLineEndings {
     Write-DeployLog "Normalized CRLF -> LF in $Path"
 }
 
+# git's core.autocrlf, or $null when unset. `git config --get` exits 1 for an
+# unset key, and 2>$null on a native command is fatal on Windows PowerShell
+# 5.1 under 'Stop' if anything reaches stderr -- see Get-AwsVersionText.
+function Get-GitAutoCrlf {
+    $ErrorActionPreference = 'Continue'
+    $value = git config --get core.autocrlf 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+    return $value
+}
+
 function Repair-ConfigLineEndings {
     if (Test-CommandExists 'git') {
-        $autocrlf = git config --get core.autocrlf 2>$null
+        $autocrlf = Get-GitAutoCrlf
         if ($autocrlf -eq 'true') {
             Write-WarningLine 'git config core.autocrlf is "true" -- future checkouts in this clone may reintroduce CRLF line endings in files this stack needs as LF (uwsgi.ini, nginx.conf, mapproxy.yaml, config.json). Consider: git config --global core.autocrlf input'
         }
@@ -662,9 +829,11 @@ function Initialize-RuntimeEnvironment {
 
 # The `docker compose ...` prefix to show in the hints printed at the end:
 # bare for the default stack (Compose auto-discovers docker-compose.yaml +
-# docker-compose.override.yaml by itself), else with this run's -f list.
+# docker-compose.override.yaml by itself), else with this run's -f list. A
+# COMPOSE_FILE in the environment or .env changes what bare `docker compose`
+# means, so then the -f list is always spelled out.
 function Get-ComposeHint {
-    if ($script:WithNginx -and -not $script:Use4087) {
+    if ($script:WithNginx -and -not $script:Use4087 -and [string]::IsNullOrEmpty($env:COMPOSE_FILE)) {
         return 'docker compose'
     }
     $fileArgs = $script:ComposeFileNames | ForEach-Object { "-f $_" }
@@ -686,6 +855,173 @@ function Get-RunningServices {
     return @($names | Where-Object { $_ })
 }
 
+# Stops when the Docker Compose plugin is older than MinComposeVersion. If
+# the version can't be read, say so and carry on rather than block a deploy
+# that might work. 'Continue' because Compose may write to stderr -- see
+# Test-DockerEngineRunning.
+function Assert-ComposeVersion {
+    $ErrorActionPreference = 'Continue'
+    $text = "$(docker compose version --short 2>$null)".Trim()
+    $exitCode = $LASTEXITCODE
+    # "v2.29.1-desktop.1" counts as 2.29.1.
+    $clean = ($text -replace '^v', '') -replace '[^0-9.].*$', ''
+    $version = $null
+    if ($exitCode -ne 0 -or -not [version]::TryParse($clean, [ref]$version)) {
+        Write-WarningLine "Couldn't read the Docker Compose version, so it wasn't checked against the minimum ($($script:MinComposeVersion))."
+        return
+    }
+    if ($version -lt $script:MinComposeVersion) {
+        Write-ErrorAndExit "Docker Compose $text is too old: this script needs $($script:MinComposeVersion) or newer (for 'up --wait-timeout' and 'pull --ignore-buildable'). Update Docker Desktop, then re-run -- see the `"Docker Compose Is Too Old`" section of docs/troubleshooting.md."
+    }
+}
+
+# Warns when the engine has less memory than the stack needs. Docker Desktop's
+# WSL2 VM is capped well below the host's RAM by default, and the symptom of
+# too little is a container that restarts without a clear error.
+function Show-DockerMemoryWarning {
+    $ErrorActionPreference = 'Continue'
+    $mem = "$(docker info --format '{{.MemTotal}}' 2>$null)".Trim()
+    if ($LASTEXITCODE -ne 0 -or $mem -notmatch '^\d+$') {
+        return
+    }
+    if ([long]$mem -lt $script:MinDockerMemoryBytes) {
+        Write-WarningLine "Docker has only $(Format-Bytes ([long]$mem)) of memory for its containers; RBT is built for 16 GB. Raise it in %UserProfile%\.wslconfig (docs/install-windows.md, 'Give WSL2 enough memory') and run 'wsl --shutdown'. Containers that are killed for lack of memory show up as restarting -- see docs/troubleshooting.md."
+    }
+}
+
+# Stops when the effective uWSGI worker settings can't start, before Docker
+# spends minutes building and then reports an unhealthy mapproxy. Mirrors the
+# defaults in docker-compose.yaml; UWSGI_CHEAPER=0 turns cheaper mode off.
+function Assert-UwsgiSettings {
+    $processes = if ($env:UWSGI_PROCESSES) { $env:UWSGI_PROCESSES } else { '8' }
+    $cheaper = if ($env:UWSGI_CHEAPER) { $env:UWSGI_CHEAPER } else { '4' }
+    if ($processes -notmatch '^\d{1,9}$' -or $cheaper -notmatch '^\d{1,9}$') {
+        Write-ErrorAndExit "UWSGI_PROCESSES ($processes) and UWSGI_CHEAPER ($cheaper) must be whole numbers -- check .env."
+    }
+    if ([int]$cheaper -ne 0 -and [int]$cheaper -ge [int]$processes) {
+        Write-ErrorAndExit "UWSGI_CHEAPER ($cheaper) must be lower than UWSGI_PROCESSES ($processes), or uWSGI won't start. Change them in .env (UWSGI_CHEAPER=0 keeps every worker running)."
+    }
+}
+
+# Stops before building or starting anything if the stack's MBTiles aren't
+# there: a tileservergl without data never becomes healthy, which would
+# otherwise be reported only after the full build and a 10-minute wait.
+function Assert-MbtilesPresent {
+    $files = @($script:RbtFile3857, $script:TerrainFile3857)
+    if ($script:Use4087) {
+        $files += @($script:RbtFile4087, $script:TerrainFile4087)
+    }
+    $missing = @($files | Where-Object { -not ((Test-Path $_ -PathType Leaf) -and ((Get-Item $_).Length -gt 0)) })
+    if ($missing.Count -gt 0) {
+        $list = $missing -join "`n  "
+        Write-ErrorAndExit "These map data files are missing or empty:`n  $list`nDownload them with .\deploy.ps1 -Download (add -Use4087 for the EPSG:4087 stack), or see the README's 'Get the Map Data'."
+    }
+}
+
+# True when a tileservergl4087 container is running.
+function Test-Tileservergl4087Running {
+    if (-not (Test-DockerEngineRunning)) {
+        return $false
+    }
+    $ErrorActionPreference = 'Continue'
+    $names = docker ps --filter 'name=^tileservergl4087$' --format '{{.Names}}' 2>$null
+    return ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace("$names"))
+}
+
+# Warns, once, up front, when the EPSG:4087 stack is running but this run
+# wasn't given -Use4087. Each step would otherwise treat it differently
+# without saying so: -Download skips its files, -Refresh leaves it serving old
+# data, and -Deploy removes it as an orphan.
+function Show-Unselected4087Warning {
+    param([bool]$WillDownload, [bool]$WillRefresh, [bool]$WillDeploy)
+    if ($script:Use4087) {
+        return
+    }
+    if (-not (Test-Tileservergl4087Running)) {
+        return
+    }
+    $effects = @()
+    if ($WillDownload) {
+        $effects += '  - the download fetches only the EPSG:3857 data, not the EPSG:4087 files'
+    }
+    if ($WillRefresh -or $WillDownload) {
+        $effects += '  - a refresh leaves tileservergl4087 serving the old data'
+    }
+    if ($WillDeploy) {
+        $effects += '  - the deploy removes tileservergl4087 (as an orphan), ending the EPSG:4087 stack'
+    }
+    if ($effects.Count -eq 0) {
+        return
+    }
+    $effectText = $effects -join "`n"
+    Write-WarningLine "tileservergl4087 (the EPSG:4087 stack) is running, but this run wasn't given -Use4087:`n$effectText`nPress Ctrl+C now and re-run with -Use4087 to keep it, or let this run switch to the default stack."
+}
+
+# Warns when COMPOSE_FILE (environment or .env) lists different files from
+# this run's -f list. -f overrides it, so this run is unaffected, but a plain
+# `docker compose` typed afterwards follows COMPOSE_FILE and may act on a
+# different deployment than the one just deployed.
+function Show-ComposeFileWarning {
+    if ([string]::IsNullOrWhiteSpace($env:COMPOSE_FILE)) {
+        return
+    }
+    $separator = if ($env:COMPOSE_PATH_SEPARATOR) { $env:COMPOSE_PATH_SEPARATOR } else { ';' }
+    $configured = @($env:COMPOSE_FILE -split [regex]::Escape($separator) |
+        Where-Object { $_ } |
+        ForEach-Object { Split-Path -Leaf $_ })
+    $expected = $script:ComposeFileNames -join ' '
+    if (($configured -join ' ') -ne $expected) {
+        Write-WarningLine "COMPOSE_FILE is set to '$($env:COMPOSE_FILE)', but this run uses $expected, and -f overrides COMPOSE_FILE. A plain 'docker compose' you type yourself follows COMPOSE_FILE, so it may act on a different deployment. The commands printed at the end include explicit -f flags."
+    }
+}
+
+# Prints what this run will do, so a bare .\deploy.ps1 (which installs
+# software and downloads hundreds of GB) never starts without saying so.
+function Write-RunSummary {
+    param(
+        [bool]$RunInit,
+        [bool]$RunDownload,
+        [bool]$RunPrep,
+        [bool]$RunRefresh,
+        [bool]$RunDeploy,
+        [bool]$StepSelected
+    )
+    $steps = @()
+    if ($RunInit) { $steps += 'init' }
+    if ($RunDownload) { $steps += 'download' }
+    if ($RunPrep) { $steps += 'prep' }
+    if ($RunRefresh) {
+        $steps += 'refresh'
+    } elseif ($RunDownload) {
+        $steps += '(refresh, if the download fetches anything)'
+    }
+    if ($RunDeploy) { $steps += 'deploy' }
+    $stepText = if ($steps.Count -gt 0) { $steps -join ' ' } else { '(none)' }
+    $stack = if ($script:Use4087) { 'the EPSG:4087 deployment' } else { 'the default deployment (EPSG:3857)' }
+    $nginx = if ($script:WithNginx) { 'with nginx' } else { 'without nginx' }
+
+    Write-DeployLog "This run: steps $stepText; $stack, $nginx"
+    if (-not $StepSelected) {
+        Write-Host '    No step switch was given, so every step runs: installing missing prerequisites,'
+        Write-Host '    downloading any missing or newer map data, and deploying. To run only some'
+        Write-Host '    of them, name them, such as .\deploy.ps1 -Deploy (see -Help).'
+    }
+}
+
+# Prints the host port Compose published for service $Service's container
+# port $ContainerPort, or $Default when that can't be read (e.g. the service
+# isn't running). Asking Compose beats echoing $env:NGINX_PORT etc., which
+# can't see a value that only .env sets.
+function Get-PublishedPort {
+    param([string]$Service, [int]$ContainerPort, [string]$Default)
+    $ErrorActionPreference = 'Continue'
+    $out = docker compose @script:ComposeFileArgs port $Service $ContainerPort 2>$null
+    if ($LASTEXITCODE -eq 0 -and "$out" -match ':(\d+)\s*$') {
+        return $Matches[1]
+    }
+    return $Default
+}
+
 # nginx caches tiles for 30 days (see nginx/config/nginx.conf) and can't tell
 # when the MBTiles or styles behind them change, and tileservergl only reads
 # both at startup. So after either changes, this recreates whichever
@@ -696,6 +1032,9 @@ function Get-RunningServices {
 function Update-ServedData {
     $running = @(Get-RunningServices)
     $didSomething = $false
+    if ($running.Count -gt 0) {
+        Assert-ComposeVersion
+    }
 
     $recreate = @($script:TileserverServices | Where-Object { $running -contains $_ })
     if ($recreate.Count -gt 0) {
@@ -743,10 +1082,16 @@ function Start-Stack {
     if (-not $script:WithNginx) {
         Write-DeployLog 'Deploying without nginx -- mapproxy and tileservergl publish their own ports directly'
     }
+    # The checks that need no Docker run first, so a mistake costs seconds
+    # rather than a build and a 10-minute wait.
+    Assert-MbtilesPresent
+    Assert-UwsgiSettings
     if (-not (Test-CommandExists 'docker')) {
         Write-ErrorAndExit 'docker.exe not found on PATH -- run .\deploy.ps1 -Init from an elevated PowerShell first, or open a new PowerShell window if Docker Desktop was only just installed.'
     }
     Start-DockerDesktopAndWait
+    Assert-ComposeVersion
+    Show-DockerMemoryWarning
 
     Write-DeployLog 'Building the mapproxy image'
     docker compose @script:ComposeFileArgs build mapproxy
@@ -762,11 +1107,15 @@ function Start-Stack {
 
     # --wait blocks until every service passes its healthcheck, so a service
     # that can't start fails the deploy here instead of hiding behind "Done.".
+    # --remove-orphans removes containers that belong to this project but not
+    # to this run's -f list: after leaving the -Use4087 stack,
+    # tileservergl4087 would otherwise keep running, holding its memory and
+    # port 8083, with nothing in the new stack using it.
     Write-DeployLog 'Starting the RBT stack and waiting for it to become healthy'
-    docker compose @script:ComposeFileArgs up -d --wait --wait-timeout 600
+    docker compose @script:ComposeFileArgs up -d --wait --wait-timeout 600 --remove-orphans
     if ($LASTEXITCODE -ne 0) {
         docker compose @script:ComposeFileArgs ps
-        Write-ErrorAndExit "The RBT stack did not become healthy within 10 minutes -- see '$(Get-ComposeHint) logs <service>' for the unhealthy service above."
+        Write-ErrorAndExit "The RBT stack did not start or become healthy within 10 minutes. See the service status above, then '$(Get-ComposeHint) logs <service>' for the one that is unhealthy or exited. 'port is already allocated' means another program (or an older deployment) holds one of the ports 8080-8083 -- see the `"Port Is Already Allocated`" section of docs/troubleshooting.md."
     }
 
     Write-DeployLog 'Current service status'
@@ -807,6 +1156,16 @@ $script:PublicS3Prefix4087 = 's3://mbtiles/4087'
 $script:ForceDownload = [bool]$Force
 $script:WithNginx = -not [bool]$NoNginx
 $script:Use4087 = [bool]$Use4087
+# The oldest Docker Compose the script's own commands work with:
+# `up --wait-timeout` arrived in 2.17.0 and `pull --ignore-buildable` in
+# 2.15.0. Older Compose rejects the flag with an "unknown flag" error that
+# doesn't say the real problem is the version.
+$script:MinComposeVersion = [version]'2.17.0'
+# The memory RBT recommends giving Docker, in bytes (14 GiB: the README asks
+# for 16 GB of RAM, and the engine's reported total is a little under the
+# amount configured). Below it, uWSGI's workers and the renderer pools can be
+# killed for lack of memory, which looks like a service that restarts forever.
+$script:MinDockerMemoryBytes = [long]14GB
 $script:RebootRequired = $false
 # Set by Get-MbtilesFile whenever it actually downloads a file, so the
 # refresh step knows the running tileservers (and nginx's tile cache) are
@@ -857,6 +1216,9 @@ foreach ($name in $script:ComposeFileNames) {
     $script:ComposeFileArgs += @('-f', $composeFile)
 }
 
+Write-RunSummary -RunInit $runInit -RunDownload $runDownload -RunPrep $runPrep -RunRefresh $runRefresh -RunDeploy $runDeploy -StepSelected $stepSelected
+Show-ComposeFileWarning
+
 try {
     $totalRamGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
     if ($totalRamGb -gt 0 -and $totalRamGb -lt 16) {
@@ -869,6 +1231,8 @@ try {
 if ($runInit -and -not (Test-IsAdministrator)) {
     Write-ErrorAndExit "-Init needs an elevated PowerShell session -- it installs software and enables the WSL2 platform.`nRe-open PowerShell as Administrator, cd to this folder, and re-run:`n  $script:ReRunCommand"
 }
+
+Show-Unselected4087Warning -WillDownload $runDownload -WillRefresh $runRefresh -WillDeploy $runDeploy
 
 if ($runInit) { Install-Prerequisites }
 if ($runDownload) {
@@ -884,21 +1248,28 @@ if ($runDeploy) {
     $composeCmd = Get-ComposeHint
     Write-Host "  Logs:     $composeCmd logs -f"
     if ($script:WithNginx) {
-        $nginxPort = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
+        $nginxDefault = if ($env:NGINX_PORT) { $env:NGINX_PORT } else { '8082' }
+        $nginxPort = Get-PublishedPort -Service 'nginx' -ContainerPort 8082 -Default $nginxDefault
+        Write-Host "  Open:     http://localhost:$nginxPort/tileservergl/   (the six style previews)"
         Write-Host "  Health:   curl.exe -fsS http://localhost:$nginxPort/healthz"
         Write-Host "  WMTS:     http://localhost:$nginxPort/mapproxy/wmts/1.0.0/WMTSCapabilities.xml"
         if ($script:Use4087) {
             Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$nginxPort/tileservergl4087/"
         }
     } else {
-        $mapproxyPort = if ($env:MAPPROXY_PORT) { $env:MAPPROXY_PORT } else { '8081' }
-        $tileserverPort = if ($env:TILESERVER_PORT) { $env:TILESERVER_PORT } else { '8080' }
+        $mapproxyDefault = if ($env:MAPPROXY_PORT) { $env:MAPPROXY_PORT } else { '8081' }
+        $tileserverDefault = if ($env:TILESERVER_PORT) { $env:TILESERVER_PORT } else { '8080' }
+        $mapproxyPort = Get-PublishedPort -Service 'mapproxy' -ContainerPort 5000 -Default $mapproxyDefault
+        $tileserverPort = Get-PublishedPort -Service 'tileservergl' -ContainerPort 8080 -Default $tileserverDefault
+        Write-Host "  Open:     http://localhost:$tileserverPort/   (the six style previews)"
         Write-Host "  MapProxy: curl.exe -fsS http://localhost:$mapproxyPort/wmts/1.0.0/WMTSCapabilities.xml"
         Write-Host "  Tiles:    curl.exe -fsS http://localhost:$tileserverPort/"
         if ($script:Use4087) {
-            $tileserver4087Port = if ($env:TILESERVER_4087_PORT) { $env:TILESERVER_4087_PORT } else { '8083' }
+            $tileserver4087Default = if ($env:TILESERVER_4087_PORT) { $env:TILESERVER_4087_PORT } else { '8083' }
+            $tileserver4087Port = Get-PublishedPort -Service 'tileservergl4087' -ContainerPort 8080 -Default $tileserver4087Default
             Write-Host "  Tiles (4087): curl.exe -fsS http://localhost:$tileserver4087Port/"
         }
     }
     Write-Host "  Stop:     $composeCmd down --remove-orphans"
+    Write-Host '  Next:     docs/verify.md has the checks that confirm the stack serves tiles'
 }
