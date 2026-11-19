@@ -7,10 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a read-only --check / -Check step
+
 ### Changed
 
 - Smooth first-run onboarding and add an operations guide
 - Bump mkdocs-material from 9.7.7 to 9.8.1
+- Add cross-file sync checks, PowerShell 5.1 and bash 3.2 jobs, and scripts/check.sh
+- Add a full-stack smoke test on fixture MBTiles
+- Pin the image's conda packages with lock files
+
+### Fixed
+
+- Preflight downloads, parse .env like compose, and clean up orphans
+- Relative nginx redirects, read-only assets, and a tighter build context
+- Probe health checks every 5s at startup and require Docker 25
+- Stop EPSG:4326 requests segfaulting workers on amd64
 
 ## [3.1.0] - 2026-11-12
 
