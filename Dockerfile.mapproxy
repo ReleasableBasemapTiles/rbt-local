@@ -83,7 +83,14 @@ make_wsgi_app('/tmp/mapproxy-smoke/mapproxy.yaml')" && \
     rm -rf /tmp/mapproxy-smoke
 
 WORKDIR /mapproxy
-COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/docker/app.py /mapproxy/app.py
+COPY --chown=$MAMBA_USER:$MAMBA_USER mapproxy/docker/app.py mapproxy/docker/mesh_guard.py /mapproxy/
+# mesh_guard.py keeps non-finite coordinates out of Pillow's mesh transform,
+# which segfaults a worker on linux/amd64 (the reason is in its header). Run
+# its self-test here so a lock-file update that changes the behaviour fails
+# the build instead of the first EPSG:4326 request. The
+# segfault only happens on x86-64, so the amd64 build is the one that proves
+# it.
+RUN python /mapproxy/mesh_guard.py
 
 # Numeric USER -- OpenShift validates this; Compose/Helm already run as 1000.
 USER 1000

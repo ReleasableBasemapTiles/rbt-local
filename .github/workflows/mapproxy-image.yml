@@ -31,6 +31,7 @@ on:
       - mapproxy/conda-linux-64.lock
       - mapproxy/conda-linux-aarch64.lock
       - mapproxy/docker/app.py
+      - mapproxy/docker/mesh_guard.py
       - .github/workflows/mapproxy-image.yml
   pull_request:
     paths:
@@ -39,6 +40,7 @@ on:
       - mapproxy/conda-linux-64.lock
       - mapproxy/conda-linux-aarch64.lock
       - mapproxy/docker/app.py
+      - mapproxy/docker/mesh_guard.py
       - .github/workflows/mapproxy-image.yml
   workflow_dispatch:
 

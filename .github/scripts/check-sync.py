@@ -10,6 +10,8 @@ misses the others fails CI instead of surfacing in a user's deploy:
   (which reads it from the Dockerfile) and every place the docs repeat it
 - the MapProxy image's inputs: the conda lock files match environment.yml, the
   Dockerfile's COPY lines match .dockerignore and the image workflow's paths
+- the mesh guard (mapproxy/docker/mesh_guard.py): app.py installs it, and the
+  Dockerfile copies it and runs its self-test
 - the set of styles across tileserver/styles/, config.json, sync-styles.yml
   and both MapProxy configs, and the "six styles" / "18 layers" counts in docs
 - the style.json rules TileserverGL depends on (sources, sprite, glyphs)
@@ -324,6 +326,31 @@ def mapproxy_image_inputs(problems: list[str]) -> None:
         watched = set(triggers[event]["paths"])
         for path in sorted(inputs - watched):
             problems.append(f"{workflow_path}: the {event} trigger doesn't watch {path}, an image input")
+
+
+@rule
+def mesh_guard(problems: list[str]) -> None:
+    """The guard against Pillow's amd64 crash is installed and self-tested.
+
+    Nothing else notices if it is dropped: arm64 never crashes, so the failure
+    shows up only as a 502 on the first world-sized EPSG:4326 request of an
+    amd64 image. (That the guard is copied, allowed by .dockerignore and
+    watched by the image workflow is mapproxy_image_inputs' job.)"""
+    guard = "mapproxy/docker/mesh_guard.py"
+    app = read("mapproxy/docker/app.py")
+    for pattern, what in (
+        (r"^import mesh_guard$", "import mesh_guard"),
+        (r"^mesh_guard\.install\(\)$", "call mesh_guard.install()"),
+    ):
+        if not re.search(pattern, app, re.M):
+            problems.append(f"mapproxy/docker/app.py: must {what} (see {guard})")
+
+    dockerfile = read("Dockerfile.mapproxy")
+    copy = r"^COPY .* mapproxy/docker/app\.py mapproxy/docker/mesh_guard\.py /mapproxy/$"
+    if not re.search(copy, dockerfile, re.M):
+        problems.append("Dockerfile.mapproxy: must COPY app.py and mesh_guard.py into /mapproxy/ together")
+    if not re.search(r"^RUN python /mapproxy/mesh_guard\.py$", dockerfile, re.M):
+        problems.append(f"Dockerfile.mapproxy: must run {guard}'s self-test (RUN python /mapproxy/mesh_guard.py)")
 
 
 # -- Styles --------------------------------------------------------------------

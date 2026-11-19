@@ -1,10 +1,11 @@
 # Used by Dockerfile.mapproxy (context .). An allowlist: everything is left
 # out of the build context except the files the Dockerfile COPYs (the two
-# mapproxy/conda-*.lock files and mapproxy/docker/app.py). A list of what to
-# exclude never keeps up with the repository -- site/, site-docs/, images/
-# and a local .venv/ are all large and were all being sent to the Docker
-# daemon on every build -- whereas a new file the image needs fails the
-# build at once with "not found".
+# mapproxy/conda-*.lock files, mapproxy/docker/app.py and
+# mapproxy/docker/mesh_guard.py). A list of what to exclude never keeps up
+# with the repository -- site/, site-docs/, images/ and a local .venv/ are
+# all large and were all being sent to the Docker daemon on every build --
+# whereas a new file the image needs fails the build at once with
+# "not found".
 #
 # Add a `!path` line here whenever Dockerfile.mapproxy gets a new COPY.
 # Bind-mounted at Compose runtime, never copied into an image: the MBTiles
@@ -15,3 +16,4 @@
 !mapproxy/conda-linux-64.lock
 !mapproxy/conda-linux-aarch64.lock
 !mapproxy/docker/app.py
+!mapproxy/docker/mesh_guard.py

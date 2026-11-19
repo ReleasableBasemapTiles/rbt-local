@@ -3,10 +3,15 @@
 # (MapProxy 8.1.0), plus MAPPROXY_CONFIG: the config file to load, default
 # /mapproxy/config/mapproxy.yaml. docker-compose.4087.yaml sets it to
 # mapproxy.4087.yaml; the Helm chart leaves it unset (see
-# charts/rbt/templates/configmap-mapproxy.yaml).
+# charts/rbt/templates/configmap-mapproxy.yaml). Also mesh_guard, which stops
+# EPSG:4326 requests crashing a worker on amd64 (mesh_guard.py says why).
 
 from logging.config import fileConfig
 import os
+
+import mesh_guard
+
+mesh_guard.install()
 
 log_config = r'/mapproxy/config/logging.ini'
 

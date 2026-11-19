@@ -74,7 +74,7 @@ rm tileserver/data/*/RBT.mbtiles tileserver/data/*/TERRAIN.mbtiles
 
 Remove the fixtures when you are done. The downloader skips a file that is already there (`RBT.mbtiles` unless the mirror's copy is newer, `TERRAIN.mbtiles` always), so a leftover fixture would stop `./deploy.sh --download` from fetching the real data.
 
-Pull requests that change `Dockerfile.mapproxy`, `.dockerignore`, `mapproxy/conda-linux-64.lock`, `mapproxy/conda-linux-aarch64.lock` or `mapproxy/docker/app.py` also build the MapProxy image, and merging one publishes it (`8.1.0` and `latest`), which the charts repo deploys, so say in the pull request that it changes the image and a maintainer can coordinate the merge with that repo.
+Pull requests that change `Dockerfile.mapproxy`, `.dockerignore`, `mapproxy/conda-linux-64.lock`, `mapproxy/conda-linux-aarch64.lock`, `mapproxy/docker/app.py` or `mapproxy/docker/mesh_guard.py` also build the MapProxy image, and merging one publishes it (`8.1.0` and `latest`), which the charts repo deploys, so say in the pull request that it changes the image and a maintainer can coordinate the merge with that repo.
 
 The image installs the exact conda packages in the two lock files, not whatever conda-forge resolves on the day, so a build is the same every time. To add or change a dependency, edit [`mapproxy/environment.yml`](mapproxy/environment.yml), then regenerate the lock files. It needs only Docker:
 
