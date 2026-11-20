@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Probe health checks every 5s at startup and require Docker 25
 - Stop EPSG:4326 requests segfaulting workers on amd64
 
+### Security
+
+- Move the image to the Debian 13 micromamba base
+
 ## [3.1.0] - 2026-11-12
 
 ### Changed
